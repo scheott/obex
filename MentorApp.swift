@@ -3,16 +3,17 @@ import SwiftUI
 // MARK: - Main App
 @main
 struct MentorApp: App {
-    @StateObject private var dataManager = DataManager()
+    let persistenceController = CoreDataStack.shared
+    @StateObject private var dataManager = EnhancedDataManager()
     
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(\.managedObjectContext, persistenceController.context)
                 .environmentObject(dataManager)
         }
     }
 }
-
 // MARK: - Main Content View
 struct ContentView: View {
     @EnvironmentObject var dataManager: DataManager
