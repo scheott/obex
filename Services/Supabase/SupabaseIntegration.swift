@@ -11,8 +11,8 @@ class SupabaseManager: ObservableObject {
     static let shared = SupabaseManager()
     
     // Replace with your Supabase project URL and anon key
-    private let supabaseURL = URL(string: "YOUR_SUPABASE_URL")!
-    private let supabaseKey = "YOUR_SUPABASE_ANON_KEY"
+    private let supabaseURL = URL(string: "")!
+    private let supabaseKey = ""
     
     let client: SupabaseClient
     
