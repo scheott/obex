@@ -16,7 +16,7 @@ struct MentorApp: App {
 }
 // MARK: - Main Content View
 struct ContentView: View {
-    @EnvironmentObject var dataManager: DataManager
+    @EnvironmentObject var dataManager: EnhancedDataManager
     @State private var selectedTab = 0
     
     var body: some View {
@@ -33,7 +33,7 @@ struct ContentView: View {
 // MARK: - Main Tab View
 struct MainTabView: View {
     @Binding var selectedTab: Int
-    @EnvironmentObject var dataManager: DataManager
+    @EnvironmentObject var dataManager: EnhancedDataManager
     
     var body: some View {
         TabView(selection: $selectedTab) {
