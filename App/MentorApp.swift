@@ -4,7 +4,7 @@ import SwiftUI
 @main
 struct MentorApp: App {
     let persistenceController = CoreDataStack.shared
-    @StateObject private var dataManager = EnhancedDataManager()
+    @StateObject private var dataManager = DataManager()
     
     var body: some Scene {
         WindowGroup {
@@ -16,7 +16,7 @@ struct MentorApp: App {
 }
 // MARK: - Main Content View
 struct ContentView: View {
-    @EnvironmentObject var dataManager: EnhancedDataManager
+    @EnvironmentObject var dataManager: DataManager
     @State private var selectedTab = 0
     
     var body: some View {
@@ -33,7 +33,7 @@ struct ContentView: View {
 // MARK: - Main Tab View
 struct MainTabView: View {
     @Binding var selectedTab: Int
-    @EnvironmentObject var dataManager: EnhancedDataManager
+    @EnvironmentObject var dataManager: DataManager
     
     var body: some View {
         TabView(selection: $selectedTab) {
