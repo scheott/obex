@@ -1,181 +1,282 @@
 import SwiftUI
+import Foundation
 
-// MARK: - Journal View
+// MARK: - Main Journal View
 struct JournalView: View {
-    @EnvironmentObject var dataManager: DataManager
-    @State private var showingNewEntry = false
-    @State private var searchText = ""
+    @EnvironmentObject var dataManager: EnhancedDataManager
     @State private var selectedFilter: JournalFilter = .all
-    @State private var showingFilterMenu = false
-    @State private var showingWeeklySummary = false
+    @State private var searchText = ""
+    @State private var showingNewEntry = false
+    @State private var showingSearch = false
+    @State private var showingSavedEntries = false
+    @State private var selectedEntry: JournalEntry?
+    @State private var showingAnalytics = false
     
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                // Search and Filter Bar
-                searchAndFilterBar
+                // Header Section
+                headerSection
                 
-                // Journal Entries List
-                if filteredEntries.isEmpty {
-                    emptyStateView
-                } else {
-                    entriesListView
-                }
+                // Filter and Search Bar
+                filterAndSearchSection
+                
+                // Content based on filter
+                contentSection
             }
-            .navigationTitle("Reflection Journal")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+            .navigationTitle("")
+            .navigationBarHidden(true)
+            .refreshable {
+                await dataManager.refreshJournalData()
+            }
+        }
+        .sheet(isPresented: $showingNewEntry) {
+            EntryComposer()
+                .environmentObject(dataManager)
+        }
+        .sheet(isPresented: $showingSavedEntries) {
+            SavedEntriesView()
+                .environmentObject(dataManager)
+        }
+        .sheet(isPresented: $showingAnalytics) {
+            JournalAnalyticsView()
+                .environmentObject(dataManager)
+        }
+        .fullScreenCover(item: $selectedEntry) { entry in
+            FullJournalEntryView(entry: entry)
+                .environmentObject(dataManager)
+        }
+        .onAppear {
+            dataManager.loadJournalEntries()
+        }
+    }
+    
+    // MARK: - Header Section
+    private var headerSection: some View {
+        VStack(spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Journal")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                    
+                    Text(getJournalSubtitle())
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                HStack(spacing: 12) {
+                    // Analytics Button
                     Button {
-                        showingWeeklySummary = true
+                        showingAnalytics = true
                     } label: {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
+                        Image(systemName: "chart.bar")
+                            .font(.title3)
                             .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
                     }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
+                    
+                    // Saved Entries Button
+                    Button {
+                        showingSavedEntries = true
+                    } label: {
+                        ZStack {
+                            Image(systemName: "heart")
+                                .font(.title3)
+                                .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
+                            
+                            if savedEntriesCount > 0 {
+                                Text("\\(savedEntriesCount)")
+                                    .font(.caption2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.white)
+                                    .frame(width: 16, height: 16)
+                                    .background(Color.red)
+                                    .clipShape(Circle())
+                                    .offset(x: 8, y: -8)
+                            }
+                        }
+                    }
+                    
+                    // New Entry Button
                     Button {
                         showingNewEntry = true
                     } label: {
                         Image(systemName: "plus")
-                            .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .frame(width: 32, height: 32)
+                            .background(dataManager.userProfile?.selectedPath.color ?? .blue)
+                            .clipShape(Circle())
                     }
                 }
             }
-            .sheet(isPresented: $showingNewEntry) {
-                NewJournalEntryView()
-            }
-            .sheet(isPresented: $showingWeeklySummary) {
-                WeeklySummaryView()
-            }
-            .confirmationDialog("Filter Entries", isPresented: $showingFilterMenu) {
-                ForEach(JournalFilter.allCases, id: \.self) { filter in
-                    Button(filter.displayName) {
-                        selectedFilter = filter
-                    }
-                }
-            }
+            
+            // Journal Stats Row
+            journalStatsRow
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 16)
+    }
+    
+    // MARK: - Journal Stats Row
+    private var journalStatsRow: some View {
+        HStack(spacing: 16) {
+            StatCard(
+                title: "This Week",
+                value: "\\(weeklyEntryCount)",
+                subtitle: "entries",
+                color: dataManager.userProfile?.selectedPath.color ?? .blue
+            )
+            
+            StatCard(
+                title: "Streak",
+                value: "\\(journalStreak)",
+                subtitle: "days",
+                color: .orange
+            )
+            
+            StatCard(
+                title: "Words",
+                value: weeklyWordCount > 1000 ? "\\(weeklyWordCount / 1000)k" : "\\(weeklyWordCount)",
+                subtitle: "written",
+                color: .green
+            )
+            
+            Spacer()
         }
     }
     
-    // MARK: - Search and Filter Bar
-    private var searchAndFilterBar: some View {
+    // MARK: - Filter and Search Section
+    private var filterAndSearchSection: some View {
         VStack(spacing: 12) {
             // Search Bar
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                
-                TextField("Search journal entries...", text: $searchText)
-                    .textFieldStyle(PlainTextFieldStyle())
-                
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color(.systemGray6))
-            )
-            
-            // Filter Pills
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(JournalFilter.allCases, id: \.self) { filter in
+            if showingSearch {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    
+                    TextField("Search entries...", text: $searchText)
+                        .textFieldStyle(PlainTextFieldStyle())
+                    
+                    if !searchText.isEmpty {
                         Button {
-                            selectedFilter = filter
+                            searchText = ""
                         } label: {
-                            Text(filter.displayName)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(selectedFilter == filter ? .white : .primary)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(selectedFilter == filter ? 
-                                              (dataManager.userProfile?.selectedPath.color ?? .blue) : 
-                                              Color(.systemGray5))
-                                )
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
                         }
                     }
                 }
                 .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+                .padding(.horizontal, 20)
+            }
+            
+            // Filter Pills
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    // Search Toggle
+                    FilterPill(
+                        title: "Search",
+                        icon: "magnifyingglass",
+                        isSelected: showingSearch,
+                        color: .gray
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showingSearch.toggle()
+                            if !showingSearch {
+                                searchText = ""
+                            }
+                        }
+                    }
+                    
+                    ForEach(JournalFilter.allCases, id: \\.self) { filter in
+                        FilterPill(
+                            title: filter.displayName,
+                            icon: filter.icon,
+                            isSelected: selectedFilter == filter,
+                            color: dataManager.userProfile?.selectedPath.color ?? .blue,
+                            badge: filter.badge(for: dataManager)
+                        ) {
+                            selectedFilter = filter
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color(.systemBackground))
-        .shadow(color: .black.opacity(0.05), radius: 1, x: 0, y: 1)
+        .padding(.bottom, 8)
+    }
+    
+    // MARK: - Content Section
+    private var contentSection: some View {
+        Group {
+            if filteredEntries.isEmpty {
+                emptyStateView
+            } else {
+                entriesListView
+            }
+        }
     }
     
     // MARK: - Empty State View
     private var emptyStateView: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            
-            Image(systemName: "book.closed")
-                .font(.system(size: 60))
+        VStack(spacing: 16) {
+            Image(systemName: getEmptyStateIcon())
+                .font(.system(size: 48))
                 .foregroundColor(.secondary)
             
-            VStack(spacing: 8) {
-                Text(searchText.isEmpty ? "Start Your Journey" : "No Entries Found")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
-                
-                Text(searchText.isEmpty ? 
-                     "Begin reflecting and documenting your growth through daily journaling." :
-                     "Try adjusting your search or filter to find entries.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-            }
+            Text(getEmptyStateTitle())
+                .font(.headline)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
             
-            if searchText.isEmpty {
+            Text(getEmptyStateMessage())
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            
+            if selectedFilter == .all && searchText.isEmpty {
                 Button {
                     showingNewEntry = true
                 } label: {
-                    Text("Write First Entry")
-                        .font(.headline)
+                    Text("Write Your First Entry")
+                        .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(.white)
                         .padding(.horizontal, 24)
                         .padding(.vertical, 12)
-                        .background(
-                            Capsule()
-                                .fill(dataManager.userProfile?.selectedPath.color ?? .blue)
-                        )
+                        .background(dataManager.userProfile?.selectedPath.color ?? .blue)
+                        .cornerRadius(20)
                 }
                 .padding(.top, 8)
             }
-            
-            Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, 40)
     }
     
     // MARK: - Entries List View
     private var entriesListView: some View {
-        ScrollView {
+        ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(spacing: 16) {
                 ForEach(filteredEntries) { entry in
                     JournalEntryCard(entry: entry)
                         .onTapGesture {
-                            // Could open detail view here
+                            selectedEntry = entry
                         }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
         }
     }
     
@@ -210,140 +311,177 @@ struct JournalView: View {
         case .thisMonth:
             let monthAgo = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
             entries = entries.filter { $0.date >= monthAgo }
+        case .insights:
+            entries = entries.filter { $0.entryType == .insight }
+        case .goals:
+            entries = entries.filter { $0.entryType == .goal }
         }
         
         // Sort by date (newest first)
         return entries.sorted { $0.date > $1.date }
     }
-}
-
-// MARK: - Journal Filter Enum
-enum JournalFilter: String, CaseIterable {
-    case all = "all"
-    case withPrompts = "prompts"
-    case freeform = "freeform"
-    case saved = "saved"
-    case reread = "reread"
-    case thisWeek = "week"
-    case thisMonth = "month"
     
-    var displayName: String {
-        switch self {
-        case .all: return "All"
-        case .withPrompts: return "Prompted"
-        case .freeform: return "Freeform"
-        case .saved: return "Saved"
-        case .reread: return "Re-read"
-        case .thisWeek: return "This Week"
-        case .thisMonth: return "This Month"
+    private var savedEntriesCount: Int {
+        return dataManager.journalEntries.filter { $0.isSavedToSelf }.count
+    }
+    
+    private var weeklyEntryCount: Int {
+        let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        return dataManager.journalEntries.filter { $0.date >= weekAgo }.count
+    }
+    
+    private var journalStreak: Int {
+        return dataManager.calculateJournalStreak()
+    }
+    
+    private var weeklyWordCount: Int {
+        let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        return dataManager.journalEntries
+            .filter { $0.date >= weekAgo }
+            .reduce(0) { $0 + $1.wordCount }
+    }
+    
+    // MARK: - Helper Methods
+    private func getJournalSubtitle() -> String {
+        if dataManager.journalEntries.isEmpty {
+            return "Start your reflection journey"
+        } else {
+            return "\\(dataManager.journalEntries.count) entries written"
+        }
+    }
+    
+    private func getEmptyStateIcon() -> String {
+        switch selectedFilter {
+        case .all: return "book.closed"
+        case .withPrompts: return "bubble.left.and.bubble.right"
+        case .freeform: return "pencil"
+        case .saved: return "heart"
+        case .reread: return "bookmark"
+        case .thisWeek, .thisMonth: return "calendar"
+        case .insights: return "lightbulb"
+        case .goals: return "target"
+        }
+    }
+    
+    private func getEmptyStateTitle() -> String {
+        switch selectedFilter {
+        case .all: return "No Entries Yet"
+        case .withPrompts: return "No Prompted Entries"
+        case .freeform: return "No Freeform Entries"
+        case .saved: return "No Saved Entries"
+        case .reread: return "Nothing Marked to Re-read"
+        case .thisWeek: return "No Entries This Week"
+        case .thisMonth: return "No Entries This Month"
+        case .insights: return "No Insights Captured"
+        case .goals: return "No Goals Recorded"
+        }
+    }
+    
+    private func getEmptyStateMessage() -> String {
+        switch selectedFilter {
+        case .all:
+            return "Your journal is waiting for your thoughts, reflections, and insights. Start writing to track your growth journey."
+        case .withPrompts:
+            return "Prompted entries help guide your reflection. Try using AI-generated prompts for deeper insights."
+        case .freeform:
+            return "Freeform entries are your space to express thoughts without structure. Write whatever comes to mind."
+        case .saved:
+            return "Mark entries as saved by tapping the heart icon. These become your personal collection of meaningful reflections."
+        case .reread:
+            return "Mark entries to re-read later by tapping the bookmark icon. Perfect for revisiting important insights."
+        case .thisWeek:
+            return "No journal entries this week yet. Consistent reflection accelerates personal growth."
+        case .thisMonth:
+            return "No journal entries this month yet. Regular journaling builds self-awareness over time."
+        case .insights:
+            return "Capture your breakthrough moments and realizations. Insights are the gems of your growth journey."
+        case .goals:
+            return "Document your goals and aspirations. Writing them down makes them more likely to become reality."
         }
     }
 }
 
 // MARK: - Journal Entry Card
 struct JournalEntryCard: View {
-    @EnvironmentObject var dataManager: DataManager
+    @EnvironmentObject var dataManager: EnhancedDataManager
     let entry: JournalEntry
     @State private var isExpanded = false
     @State private var showingFullEntry = false
     
+    private let previewLength = 120
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header with date and mood
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
+            // Header with date and metadata
+            headerSection
+            
+            // Content preview
+            contentSection
+            
+            // Tags and actions
+            footerSection
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.regularMaterial)
+        )
+        .contentShape(Rectangle())
+    }
+    
+    // MARK: - Header Section
+    private var headerSection: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
                     Text(formatDate(entry.date))
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
                     
-                    if let prompt = entry.prompt {
-                        Text("Prompted Entry")
+                    if let mood = entry.mood {
+                        Text(mood.emoji)
+                            .font(.subheadline)
+                    }
+                    
+                    if entry.entryType != .reflection {
+                        Text(entry.entryType.displayName)
                             .font(.caption)
                             .fontWeight(.medium)
                             .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
-                    }
-                }
-                
-                Spacer()
-                
-                HStack(spacing: 8) {
-                    if let mood = entry.mood {
-                        Text(mood.emoji)
-                            .font(.title3)
-                    }
-                    
-                    if entry.isSavedToSelf {
-                        Image(systemName: "heart.fill")
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
-                    
-                    if entry.isMarkedForReread {
-                        Image(systemName: "bookmark.fill")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                }
-            }
-            
-            // Prompt (if exists)
-            if let prompt = entry.prompt {
-                Text(prompt)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
-                    .italic()
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill((dataManager.userProfile?.selectedPath.color ?? .blue).opacity(0.1))
-                    )
-            }
-            
-            // Content preview
-            Text(entry.content)
-                .font(.body)
-                .foregroundColor(.primary)
-                .lineLimit(isExpanded ? nil : 4)
-                .onTapGesture {
-                    showingFullEntry = true
-                }
-            
-            // Tags
-            if !entry.tags.isEmpty {
-                FlowLayout(spacing: 6) {
-                    ForEach(entry.tags, id: \.self) { tag in
-                        Text("#\(tag)")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
                             .background(
                                 Capsule()
-                                    .fill(Color(.systemGray6))
+                                    .fill((dataManager.userProfile?.selectedPath.color ?? .blue).opacity(0.1))
                             )
                     }
                 }
+                
+                HStack(spacing: 12) {
+                    if let prompt = entry.prompt {
+                        Label("Prompted", systemImage: "bubble.left.and.bubble.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    if entry.wordCount > 0 {
+                        Label("\\(entry.wordCount) words", systemImage: "textformat")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    if entry.readingTime > 0 {
+                        Label("\\(entry.readingTime) min read", systemImage: "clock")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             
-            // Action buttons
-            HStack {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        isExpanded.toggle()
-                    }
-                } label: {
-                    Text(isExpanded ? "Show Less" : "Read More")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
-                }
-                
-                Spacer()
-                
+            Spacer()
+            
+            VStack(spacing: 8) {
                 Button {
                     toggleSaved()
                 } label: {
@@ -361,16 +499,74 @@ struct JournalEntryCard: View {
                 }
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.regularMaterial)
-        )
-        .sheet(isPresented: $showingFullEntry) {
-            FullJournalEntryView(entry: entry)
+    }
+    
+    // MARK: - Content Section
+    private var contentSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Prompt if exists
+            if let prompt = entry.prompt, !isExpanded {
+                Text(prompt)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
+                    .italic()
+                    .lineLimit(2)
+            }
+            
+            // Content
+            Group {
+                if entry.content.count <= previewLength || isExpanded {
+                    Text(entry.content)
+                        .font(.body)
+                        .foregroundColor(.primary)
+                } else {
+                    Text(String(entry.content.prefix(previewLength)) + "...")
+                        .font(.body)
+                        .foregroundColor(.primary)
+                }
+            }
+            .lineLimit(isExpanded ? nil : 4)
+            
+            // Read more/less button
+            if entry.content.count > previewLength {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    Text(isExpanded ? "Show Less" : "Read More")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
+                }
+            }
         }
     }
     
+    // MARK: - Footer Section
+    private var footerSection: some View {
+        if !entry.tags.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(entry.tags, id: \\.self) { tag in
+                        Text("#\\(tag)")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill((dataManager.userProfile?.selectedPath.color ?? .blue).opacity(0.1))
+                            )
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Helper Methods
     private func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         if Calendar.current.isDateInToday(date) {
@@ -387,24 +583,22 @@ struct JournalEntryCard: View {
     }
     
     private func toggleSaved() {
-        if let index = dataManager.journalEntries.firstIndex(where: { $0.id == entry.id }) {
-            dataManager.journalEntries[index].isSavedToSelf.toggle()
-            // In a real app, this would trigger a save to persistence
+        Task {
+            await dataManager.toggleJournalEntrySaved(entry)
         }
     }
     
     private func toggleReread() {
-        if let index = dataManager.journalEntries.firstIndex(where: { $0.id == entry.id }) {
-            dataManager.journalEntries[index].isMarkedForReread.toggle()
-            // In a real app, this would trigger a save to persistence
+        Task {
+            await dataManager.toggleJournalEntryReread(entry)
         }
     }
 }
 
-// MARK: - New Journal Entry View
-struct NewJournalEntryView: View {
-    @EnvironmentObject var dataManager: DataManager
-    @Environment(\.dismiss) private var dismiss
+// MARK: - Entry Composer
+struct EntryComposer: View {
+    @EnvironmentObject var dataManager: EnhancedDataManager
+    @Environment(\\.dismiss) private var dismiss
     @State private var content = ""
     @State private var selectedMood: AICheckIn.MoodRating?
     @State private var tags: [String] = []
@@ -412,27 +606,30 @@ struct NewJournalEntryView: View {
     @State private var usePrompt = false
     @State private var selectedPrompt = ""
     @State private var availablePrompts: [String] = []
+    @State private var entryType: JournalEntryType = .reflection
+    @State private var isPrivate = false
     @FocusState private var isContentFocused: Bool
-    @FocusState private var isTagFocused: Bool
+    @FocusState private var isTagInputFocused: Bool
     
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 24) {
+                    // Content Editor
+                    contentEditorSection
+                    
                     // Prompt Section
-                    promptSection
+                    if usePrompt {
+                        promptSection
+                    }
                     
-                    // Content Section
-                    contentSection
-                    
-                    // Mood Section
-                    moodSection
+                    // Metadata Section
+                    metadataSection
                     
                     // Tags Section
                     tagsSection
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 20)
+                .padding(20)
             }
             .navigationTitle("New Entry")
             .navigationBarTitleDisplayMode(.inline)
@@ -447,170 +644,130 @@ struct NewJournalEntryView: View {
                     Button("Save") {
                         saveEntry()
                     }
-                    .disabled(content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .fontWeight(.semibold)
+                    .disabled(content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .onAppear {
-                generatePrompts()
+        }
+        .onAppear {
+            generatePrompts()
+            isContentFocused = true
+        }
+    }
+    
+    // MARK: - Content Editor Section
+    private var contentEditorSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Your Thoughts")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Spacer()
+                
+                Text("\\(content.count) characters")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
+            
+            TextEditor(text: $content)
+                .font(.body)
+                .frame(minHeight: 120)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(.systemGray6))
+                )
+                .focused($isContentFocused)
         }
     }
     
     // MARK: - Prompt Section
     private var promptSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle("Use Writing Prompt", isOn: $usePrompt)
+            Text("Writing Prompt")
                 .font(.headline)
                 .fontWeight(.semibold)
             
-            if usePrompt {
-                VStack(spacing: 12) {
-                    ForEach(availablePrompts, id: \.self) { prompt in
-                        Button {
-                            selectedPrompt = prompt
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(prompt)
-                                        .font(.subheadline)
-                                        .foregroundColor(.primary)
-                                        .multilineTextAlignment(.leading)
-                                }
-                                
-                                Spacer()
-                                
-                                if selectedPrompt == prompt {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
-                                }
-                            }
-                            .padding(12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(selectedPrompt == prompt ? 
-                                          (dataManager.userProfile?.selectedPath.color ?? .blue).opacity(0.1) : 
-                                          Color(.systemGray6))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(selectedPrompt == prompt ? 
-                                            (dataManager.userProfile?.selectedPath.color ?? .blue) : 
-                                            Color.clear, lineWidth: 2)
-                            )
-                        }
-                    }
-                    
-                    Button {
-                        generatePrompts()
-                    } label: {
-                        HStack {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Get New Prompts")
-                        }
-                        .font(.subheadline)
-                        .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
-                    }
+            PromptSuggestions(
+                prompts: availablePrompts,
+                selectedPrompt: $selectedPrompt,
+                onSelect: { prompt in
+                    selectedPrompt = prompt
                 }
-            }
+            )
         }
     }
     
-    // MARK: - Content Section
-    private var contentSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Your Reflection")
-                .font(.headline)
-                .fontWeight(.semibold)
-            
-            if usePrompt && !selectedPrompt.isEmpty {
-                Text(selectedPrompt)
+    // MARK: - Metadata Section
+    private var metadataSection: some View {
+        VStack(spacing: 16) {
+            // Prompt Toggle
+            HStack {
+                Text("Use Writing Prompt")
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
-                    .italic()
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill((dataManager.userProfile?.selectedPath.color ?? .blue).opacity(0.1))
-                    )
-            }
-            
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray6))
-                    .frame(minHeight: 200)
                 
-                if content.isEmpty {
-                    Text("Write about your thoughts, feelings, experiences, or insights...")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                }
-                
-                TextEditor(text: $content)
-                    .focused($isContentFocused)
-                    .font(.body)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.clear)
-                    .scrollContentBackground(.hidden)
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isContentFocused ? 
-                            (dataManager.userProfile?.selectedPath.color ?? .blue) : 
-                            Color.clear, lineWidth: 2)
-            )
-            
-            HStack {
                 Spacer()
-                Text("\(content.count) characters")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                
+                Toggle("", isOn: $usePrompt)
+                    .tint(dataManager.userProfile?.selectedPath.color ?? .blue)
             }
-        }
-    }
-    
-    // MARK: - Mood Section
-    private var moodSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Current Mood (Optional)")
-                .font(.headline)
-                .fontWeight(.semibold)
             
-            HStack(spacing: 8) {
-                ForEach(AICheckIn.MoodRating.allCases, id: \.self) { mood in
-                    Button {
-                        selectedMood = selectedMood == mood ? nil : mood
-                    } label: {
-                        VStack(spacing: 6) {
-                            Text(mood.emoji)
-                                .font(.title2)
-                            
-                            Text(mood.rawValue.capitalized)
-                                .font(.caption2)
-                                .fontWeight(.medium)
+            // Entry Type Picker
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Entry Type")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(JournalEntryType.allCases, id: \\.self) { type in
+                            Button {
+                                entryType = type
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: type.icon)
+                                        .font(.caption)
+                                    Text(type.displayName)
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                }
+                                .foregroundColor(entryType == type ? .white : (dataManager.userProfile?.selectedPath.color ?? .blue))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(entryType == type ? (dataManager.userProfile?.selectedPath.color ?? .blue) : Color(.systemGray6))
+                                )
+                            }
                         }
-                        .padding(.vertical, 10)
-                        .padding(.horizontal, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(selectedMood == mood ? 
-                                      (dataManager.userProfile?.selectedPath.color ?? .blue).opacity(0.2) : 
-                                      Color(.systemGray6))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(selectedMood == mood ? 
-                                        (dataManager.userProfile?.selectedPath.color ?? .blue) : 
-                                        Color.clear, lineWidth: 2)
-                        )
                     }
-                    .foregroundColor(.primary)
+                    .padding(.horizontal, 4)
                 }
+            }
+            
+            // Mood Selector
+            if selectedMood != nil || content.count > 50 {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Current Mood")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    MoodSelector(selectedMood: $selectedMood)
+                }
+            }
+            
+            // Privacy Toggle
+            HStack {
+                Text("Private Entry")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Spacer()
+                
+                Toggle("", isOn: $isPrivate)
+                    .tint(dataManager.userProfile?.selectedPath.color ?? .blue)
             }
         }
     }
@@ -618,36 +775,115 @@ struct NewJournalEntryView: View {
     // MARK: - Tags Section
     private var tagsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Tags (Optional)")
+            Text("Tags")
                 .font(.headline)
                 .fontWeight(.semibold)
             
-            // Tag input
-            HStack {
-                TextField("Add a tag...", text: $tagInput)
-                    .focused($isTagFocused)
-                    .onSubmit {
-                        addTag()
-                    }
-                
-                Button {
-                    addTag()
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
-                }
-                .disabled(tagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray6))
+            TagSelector(
+                tags: $tags,
+                tagInput: $tagInput,
+                isFocused: $isTagInputFocused,
+                availableTags: getSuggestedTags()
             )
-            
+        }
+    }
+    
+    // MARK: - Helper Methods
+    private func generatePrompts() {
+        guard let path = dataManager.userProfile?.selectedPath else { return }
+        availablePrompts = JournalPromptGenerator.generatePrompts(for: path, type: entryType)
+        selectedPrompt = availablePrompts.first ?? ""
+    }
+    
+    private func getSuggestedTags() -> [String] {
+        guard let path = dataManager.userProfile?.selectedPath else { return [] }
+        
+        let pathTags = [
+            TrainingPath.discipline: ["habits", "willpower", "consistency", "goals", "routine", "focus"],
+            TrainingPath.clarity: ["mindfulness", "thoughts", "emotions", "awareness", "meditation"],
+            TrainingPath.confidence: ["courage", "social", "leadership", "voice", "boldness", "growth"],
+            TrainingPath.purpose: ["values", "meaning", "service", "vision", "legacy", "impact"],
+            TrainingPath.authenticity: ["truth", "vulnerability", "genuine", "real", "expression", "honesty"]
+        ]
+        
+        return pathTags[path] ?? []
+    }
+    
+    private func saveEntry() {
+        var entry = JournalEntry(
+            date: Date(),
+            content: content.trimmingCharacters(in: .whitespacesAndNewlines),
+            prompt: usePrompt ? selectedPrompt : nil,
+            mood: selectedMood,
+            tags: tags
+        )
+        
+        entry.entryType = entryType
+        entry.isPrivate = isPrivate
+        entry.pathContext = dataManager.userProfile?.selectedPath
+        
+        Task {
+            await dataManager.addJournalEntry(entry)
+        }
+        
+        dismiss()
+        
+        // Haptic feedback
+        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+        impactFeedback.impactOccurred()
+    }
+}
+
+// MARK: - Prompt Suggestions
+struct PromptSuggestions: View {
+    let prompts: [String]
+    @Binding var selectedPrompt: String
+    let onSelect: (String) -> Void
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(prompts.prefix(3), id: \\.self) { prompt in
+                Button {
+                    selectedPrompt = prompt
+                    onSelect(prompt)
+                } label: {
+                    HStack {
+                        Text(prompt)
+                            .font(.subheadline)
+                            .foregroundColor(.primary)
+                            .multilineTextAlignment(.leading)
+                        
+                        Spacer()
+                        
+                        if selectedPrompt == prompt {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        }
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(selectedPrompt == prompt ? Color(.systemBlue).opacity(0.1) : Color(.systemGray6))
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+    }
+}
+
+// MARK: - Tag Selector
+struct TagSelector: View {
+    @Binding var tags: [String]
+    @Binding var tagInput: String
+    var isFocused: FocusState<Bool>.Binding
+    let availableTags: [String]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
             // Current tags
             if !tags.isEmpty {
-                FlowLayout(spacing: 8) {
+                FlowLayout(spacing: 6) {
                     ForEach(tags, id: \.self) { tag in
                         HStack(spacing: 4) {
                             Text("#\(tag)")
@@ -657,7 +893,7 @@ struct NewJournalEntryView: View {
                             Button {
                                 removeTag(tag)
                             } label: {
-                                Image(systemName: "xmark")
+                                Image(systemName: "xmark.circle.fill")
                                     .font(.caption2)
                             }
                         }
@@ -666,23 +902,47 @@ struct NewJournalEntryView: View {
                         .padding(.vertical, 4)
                         .background(
                             Capsule()
-                                .fill(dataManager.userProfile?.selectedPath.color ?? .blue)
+                                .fill(Color.blue)
                         )
                     }
                 }
             }
             
+            // Tag input
+            HStack {
+                TextField("Add tags...", text: $tagInput)
+                    .focused(isFocused)
+                    .onSubmit {
+                        addTag()
+                    }
+                
+                if !tagInput.isEmpty {
+                    Button {
+                        addTag()
+                    } label: {
+                        Text("Add")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                    }
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(.systemGray6))
+            )
+            
             // Suggested tags
-            let suggestedTags = getSuggestedTags()
-            if !suggestedTags.isEmpty {
+            let suggestions = availableTags.filter { !tags.contains($0) }
+            if !suggestions.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Suggested Tags")
-                        .font(.subheadline)
+                    Text("Suggested")
+                        .font(.caption)
                         .fontWeight(.medium)
                         .foregroundColor(.secondary)
                     
                     FlowLayout(spacing: 6) {
-                        ForEach(suggestedTags, id: \.self) { tag in
+                        ForEach(suggestions.prefix(6), id: \.self) { tag in
                             Button {
                                 addSuggestedTag(tag)
                             } label: {
@@ -704,15 +964,6 @@ struct NewJournalEntryView: View {
         }
     }
     
-    // MARK: - Helper Methods
-    private func generatePrompts() {
-        guard let path = dataManager.userProfile?.selectedPath else { return }
-        
-        let prompts = JournalPromptGenerator.generatePrompts(for: path)
-        availablePrompts = Array(prompts.prefix(3))
-        selectedPrompt = availablePrompts.first ?? ""
-    }
-    
     private func addTag() {
         let trimmedTag = tagInput.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !trimmedTag.isEmpty && !tags.contains(trimmedTag) {
@@ -730,128 +981,317 @@ struct NewJournalEntryView: View {
     private func removeTag(_ tag: String) {
         tags.removeAll { $0 == tag }
     }
+}
+
+// MARK: - Entry Search View
+struct EntrySearchView: View {
+    @EnvironmentObject var dataManager: EnhancedDataManager
+    @State private var searchQuery = ""
+    @State private var searchResults: [JournalEntry] = []
+    @State private var isSearching = false
     
-    private func getSuggestedTags() -> [String] {
-        guard let path = dataManager.userProfile?.selectedPath else { return [] }
-        
-        let pathTags = [
-            .discipline: ["habits", "willpower", "consistency", "goals", "routine"],
-            .clarity: ["mindfulness", "thoughts", "emotions", "focus", "awareness"],
-            .confidence: ["courage", "social", "leadership", "voice", "boldness"],
-            .purpose: ["values", "meaning", "service", "vision", "legacy"],
-            .authenticity: ["truth", "vulnerability", "genuine", "real", "expression"]
-        ]
-        
-        let baseTags = pathTags[path] ?? []
-        return baseTags.filter { !tags.contains($0) }
+    var body: some View {
+        VStack(spacing: 16) {
+            // Search bar
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                
+                TextField("Search your journal...", text: $searchQuery)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .onChange(of: searchQuery) { _ in
+                        performSearch()
+                    }
+                
+                if !searchQuery.isEmpty {
+                    Button {
+                        searchQuery = ""
+                        searchResults = []
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color(.systemGray6))
+            .cornerRadius(12)
+            
+            // Search results
+            if isSearching {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !searchResults.isEmpty {
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(searchResults) { entry in
+                            JournalEntryCard(entry: entry)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+            } else if !searchQuery.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.largeTitle)
+                        .foregroundColor(.secondary)
+                    
+                    Text("No Results Found")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    
+                    Text("Try different keywords or check your spelling")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.top, 60)
+            }
+        }
+        .padding(.horizontal, 20)
     }
     
-    private func saveEntry() {
-        let entry = JournalEntry(
-            date: Date(),
-            content: content,
-            prompt: usePrompt ? selectedPrompt : nil,
-            mood: selectedMood,
-            tags: tags
-        )
+    private func performSearch() {
+        guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            searchResults = []
+            return
+        }
         
-        dataManager.addJournalEntry(entry)
-        dismiss()
+        isSearching = true
         
-        // Haptic feedback
-        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-        impactFeedback.impactOccurred()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            searchResults = dataManager.searchJournalEntries(query: searchQuery)
+            isSearching = false
+        }
     }
 }
 
-// MARK: - Full Journal Entry View
-struct FullJournalEntryView: View {
-    let entry: JournalEntry
+// MARK: - Saved Entries View
+struct SavedEntriesView: View {
+    @EnvironmentObject var dataManager: EnhancedDataManager
     @Environment(\.dismiss) private var dismiss
+    
+    private var savedEntries: [JournalEntry] {
+        dataManager.journalEntries.filter { $0.isSavedToSelf }.sorted { $0.date > $1.date }
+    }
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Header
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(formatFullDate(entry.date))
-                            .font(.title2)
-                            .fontWeight(.semibold)
+            Group {
+                if savedEntries.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "heart")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
                         
-                        if let mood = entry.mood {
-                            HStack {
-                                Text(mood.emoji)
-                                Text("Feeling \(mood.rawValue)")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                    
-                    // Prompt
-                    if let prompt = entry.prompt {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Prompt")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                            
-                            Text(prompt)
-                                .font(.subheadline)
-                                .italic()
-                                .foregroundColor(.blue)
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.blue.opacity(0.1))
-                                )
-                        }
-                    }
-                    
-                    // Content
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Entry")
+                        Text("No Saved Entries")
                             .font(.headline)
                             .fontWeight(.semibold)
                         
-                        Text(entry.content)
-                            .font(.body)
-                            .foregroundColor(.primary)
+                        Text("Tap the heart icon on any entry to save it to this collection")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
                     }
-                    
-                    // Tags
-                    if !entry.tags.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Tags")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                            
-                            FlowLayout(spacing: 6) {
-                                ForEach(entry.tags, id: \.self) { tag in
-                                    Text("#\(tag)")
-                                        .font(.caption)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.secondary)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color(.systemGray6))
-                                        )
-                                }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 16) {
+                            ForEach(savedEntries) { entry in
+                                JournalEntryCard(entry: entry)
                             }
                         }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
                     }
                 }
-                .padding(20)
             }
-            .navigationTitle("Journal Entry")
+            .navigationTitle("Saved Entries")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         dismiss()
                     }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Full Journal Entry View
+struct FullJournalEntryView: View {
+    @EnvironmentObject var dataManager: EnhancedDataManager
+    let entry: JournalEntry
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingEditView = false
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    // Header
+                    headerSection
+                    
+                    // Prompt
+                    if let prompt = entry.prompt {
+                        promptSection(prompt)
+                    }
+                    
+                    // Content
+                    contentSection
+                    
+                    // Tags
+                    if !entry.tags.isEmpty {
+                        tagsSection
+                    }
+                    
+                    // Metadata
+                    metadataSection
+                }
+                .padding(20)
+            }
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    HStack(spacing: 16) {
+                        Button {
+                            Task {
+                                await dataManager.toggleJournalEntrySaved(entry)
+                            }
+                        } label: {
+                            Image(systemName: entry.isSavedToSelf ? "heart.fill" : "heart")
+                                .foregroundColor(entry.isSavedToSelf ? .red : .primary)
+                        }
+                        
+                        Button {
+                            Task {
+                                await dataManager.toggleJournalEntryReread(entry)
+                            }
+                        } label: {
+                            Image(systemName: entry.isMarkedForReread ? "bookmark.fill" : "bookmark")
+                                .foregroundColor(entry.isMarkedForReread ? .orange : .primary)
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingEditView) {
+            EntryEditView(entry: entry)
+                .environmentObject(dataManager)
+        }
+    }
+    
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(formatFullDate(entry.date))
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            HStack(spacing: 16) {
+                if let mood = entry.mood {
+                    HStack(spacing: 6) {
+                        Text(mood.emoji)
+                        Text(mood.displayName)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                if entry.entryType != .reflection {
+                    HStack(spacing: 6) {
+                        Image(systemName: entry.entryType.icon)
+                            .font(.caption)
+                        Text(entry.entryType.displayName)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+            }
+        }
+    }
+    
+    private func promptSection(_ prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Prompt")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            Text(prompt)
+                .font(.subheadline)
+                .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
+                .italic()
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill((dataManager.userProfile?.selectedPath.color ?? .blue).opacity(0.1))
+                )
+        }
+    }
+    
+    private var contentSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Entry")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            Text(entry.content)
+                .font(.body)
+                .lineSpacing(4)
+        }
+    }
+    
+    private var tagsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tags")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            FlowLayout(spacing: 8) {
+                ForEach(entry.tags, id: \.self) { tag in
+                    Text("#\(tag)")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(dataManager.userProfile?.selectedPath.color ?? .blue)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill((dataManager.userProfile?.selectedPath.color ?? .blue).opacity(0.1))
+                        )
+                }
+            }
+        }
+    }
+    
+    private var metadataSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Details")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            VStack(spacing: 8) {
+                MetadataRow(label: "Word Count", value: "\(entry.wordCount) words")
+                MetadataRow(label: "Reading Time", value: "\(entry.readingTime) min")
+                
+                if let lastEdited = entry.lastEditedDate {
+                    MetadataRow(label: "Last Edited", value: formatFullDate(lastEdited))
+                }
+                
+                if entry.isPrivate {
+                    MetadataRow(label: "Privacy", value: "Private entry")
                 }
             }
         }
@@ -865,43 +1305,331 @@ struct FullJournalEntryView: View {
     }
 }
 
-// MARK: - Weekly Summary View
-struct WeeklySummaryView: View {
-    @EnvironmentObject var dataManager: DataManager
-    @Environment(\.dismiss) private var dismiss
+// MARK: - Supporting Views
+
+struct StatCard: View {
+    let title: String
+    let value: String
+    let subtitle: String
+    let color: Color
     
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("Weekly insights and patterns from your journal entries coming soon!")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .padding()
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            
+            Text(value)
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundColor(color)
+            
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.regularMaterial)
+        )
+    }
+}
+
+struct FilterPill: View {
+    let title: String
+    let icon: String?
+    let isSelected: Bool
+    let color: Color
+    let badge: Int?
+    let action: () -> Void
+    
+    init(title: String, icon: String? = nil, isSelected: Bool, color: Color, badge: Int? = nil, action: @escaping () -> Void) {
+        self.title = title
+        self.icon = icon
+        self.isSelected = isSelected
+        self.color = color
+        self.badge = badge
+        self.action = action
+    }
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.caption)
+                }
+                
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                if let badge = badge, badge > 0 {
+                    Text("\(badge)")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .frame(width: 16, height: 16)
+                        .background(Color.red)
+                        .clipShape(Circle())
                 }
             }
-            .navigationTitle("Weekly Summary")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+            .foregroundColor(isSelected ? .white : color)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(isSelected ? color : color.opacity(0.1))
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+struct MoodSelector: View {
+    @Binding var selectedMood: AICheckIn.MoodRating?
+    
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(AICheckIn.MoodRating.allCases, id: \.self) { mood in
+                    Button {
+                        selectedMood = selectedMood == mood ? nil : mood
+                    } label: {
+                        VStack(spacing: 4) {
+                            Text(mood.emoji)
+                                .font(.title2)
+                            
+                            Text(mood.displayName)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(selectedMood == mood ? .white : .primary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(selectedMood == mood ? mood.color : Color(.systemGray6))
+                        )
                     }
                 }
             }
+            .padding(.horizontal, 4)
+        }
+    }
+}
+
+struct MetadataRow: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            Spacer()
+            
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.medium)
+        }
+    }
+}
+
+struct FlowLayout: Layout {
+    let spacing: CGFloat
+    
+    init(spacing: CGFloat = 8) {
+        self.spacing = spacing
+    }
+    
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        return layout(sizes: sizes, proposal: proposal).size
+    }
+    
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let offsets = layout(sizes: sizes, proposal: proposal).offsets
+        
+        for (offset, subview) in zip(offsets, subviews) {
+            subview.place(at: CGPoint(x: bounds.minX + offset.x, y: bounds.minY + offset.y), proposal: .unspecified)
+        }
+    }
+    
+    private func layout(sizes: [CGSize], proposal: ProposedViewSize) -> (offsets: [CGPoint], size: CGSize) {
+        let containerWidth = proposal.width ?? 0
+        var offsets: [CGPoint] = []
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var maxY: CGFloat = 0
+        
+        for size in sizes {
+            if currentX + size.width > containerWidth && currentX > 0 {
+                currentX = 0
+                currentY = maxY + spacing
+            }
+            
+            offsets.append(CGPoint(x: currentX, y: currentY))
+            currentX += size.width + spacing
+            maxY = max(maxY, currentY + size.height)
+        }
+        
+        return (offsets, CGSize(width: containerWidth, height: maxY))
+    }
+}
+
+// MARK: - Enhanced Journal Filter Enum
+enum JournalFilter: String, CaseIterable {
+    case all = "all"
+    case withPrompts = "prompts"
+    case freeform = "freeform"
+    case saved = "saved"
+    case reread = "reread"
+    case thisWeek = "week"
+    case thisMonth = "month"
+    case insights = "insights"
+    case goals = "goals"
+    
+    var displayName: String {
+        switch self {
+        case .all: return "All"
+        case .withPrompts: return "Prompted"
+        case .freeform: return "Freeform"
+        case .saved: return "Saved"
+        case .reread: return "Re-read"
+        case .thisWeek: return "This Week"
+        case .thisMonth: return "This Month"
+        case .insights: return "Insights"
+        case .goals: return "Goals"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .all: return "doc.text"
+        case .withPrompts: return "bubble.left.and.bubble.right"
+        case .freeform: return "pencil"
+        case .saved: return "heart"
+        case .reread: return "bookmark"
+        case .thisWeek, .thisMonth: return "calendar"
+        case .insights: return "lightbulb"
+        case .goals: return "target"
+        }
+    }
+    
+    func badge(for dataManager: EnhancedDataManager) -> Int? {
+        switch self {
+        case .saved:
+            let count = dataManager.journalEntries.filter { $0.isSavedToSelf }.count
+            return count > 0 ? count : nil
+        case .reread:
+            let count = dataManager.journalEntries.filter { $0.isMarkedForReread }.count
+            return count > 0 ? count : nil
+        default:
+            return nil
         }
     }
 }
 
 // MARK: - Journal Prompt Generator
 struct JournalPromptGenerator {
-    static func generatePrompts(for path: TrainingPath) -> [String] {
-        switch path {
-        case .discipline:
+    static func generatePrompts(for path: TrainingPath, type: JournalEntryType = .reflection) -> [String] {
+        switch (path, type) {
+        case (.discipline, .reflection):
             return [
-                "What habit am I most proud of building, and what habit do I want to develop next?",
-                "When did I choose discipline over comfort this week, and how did it feel?",
-                "What resistance am I feeling right now, and what is it trying to teach me?",
-                "If I could give my past self one piece of advice about discipline, what would it be?",
-                "What small act of discipline could I commit to that would compound over time?"
-            
+                "What habit did I practice consistently today, and how did it make me feel?",
+                "When did I choose discipline over comfort today?",
+                "What challenged my willpower today, and how did I respond?",
+                "How did I show up differently today compared to yesterday?",
+                "What's one area where I need more discipline in my life?"
+            ]
+        case (.discipline, .goal):
+            return [
+                "What specific discipline-related goal do I want to achieve this month?",
+                "How will building stronger discipline serve my long-term vision?",
+                "What systems can I create to make discipline easier?",
+                "What would my life look like with unshakeable discipline?"
+            ]
+        case (.clarity, .reflection):
+            return [
+                "What thoughts kept recurring in my mind today?",
+                "When did I feel most mentally clear and focused?",
+                "What emotions am I carrying that I need to process?",
+                "How did I practice mindfulness or presence today?",
+                "What beliefs am I holding that might not serve me?"
+            ]
+        case (.confidence, .reflection):
+            return [
+                "When did I step outside my comfort zone today?",
+                "How did I use my voice to advocate for myself or others?",
+                "What feedback did I receive that surprised me?",
+                "When did I feel most confident today, and why?",
+                "What social risk did I take, and what did I learn?"
+            ]
+        case (.purpose, .reflection):
+            return [
+                "How did my actions today align with my deeper values?",
+                "When did I feel most connected to my sense of purpose?",
+                "What impact did I make on others today?",
+                "How did I invest in what matters most to me?",
+                "What pulled at my heart that I want to explore further?"
+            ]
+        case (.authenticity, .reflection):
+            return [
+                "When did I show up as my most genuine self today?",
+                "Where did I choose truth over people-pleasing?",
+                "How did I honor my real feelings instead of hiding them?",
+                "What part of myself did I express that felt authentic?",
+                "When did I set a boundary that honored my true self?"
+            ]
+        default:
+            return generateGeneralPrompts(for: type)
+        }
+    }
+    
+    private static func generateGeneralPrompts(for type: JournalEntryType) -> [String] {
+        switch type {
+        case .gratitude:
+            return [
+                "What am I most grateful for today?",
+                "Who made a positive impact on my life recently?",
+                "What simple pleasure brought me joy today?"
+            ]
+        case .insight:
+            return [
+                "What did I learn about myself today?",
+                "What assumption was challenged today?",
+                "What pattern in my behavior am I noticing?"
+            ]
+        case .goal:
+            return [
+                "What do I want to accomplish in the next 30 days?",
+                "How will I measure progress toward this goal?",
+                "What obstacles might I face, and how will I overcome them?"
+            ]
+        case .challenge:
+            return [
+                "What's the biggest challenge I'm facing right now?",
+                "How can I reframe this challenge as an opportunity?",
+                "What resources do I have to help me through this?"
+            ]
+        case .progress:
+            return [
+                "What progress have I made toward my goals this week?",
+                "How have I grown compared to a month ago?",
+                "What evidence do I have that I'm moving in the right direction?"
+            ]
+        case .reflection:
+            return [
+                "How am I feeling right now, and why?",
+                "What was the highlight of my day?",
+                "What would I do differently if I could repeat today?"
+            ]
+        }
+    }
+}
