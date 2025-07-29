@@ -1,230 +1,883 @@
 import Foundation
+import CoreData
 
 // MARK: - Challenge Generator
-struct ChallengeGenerator {
+class ChallengeGenerator {
+    static let shared = ChallengeGenerator()
     
-    // MARK: - Public Interface
-    static func generateChallenge(for path: TrainingPath, difficulty: DailyChallenge.ChallengeDifficulty = .micro) -> DailyChallenge {
-        let challenges = getChallenges(for: path, difficulty: difficulty)
-        let randomChallenge = challenges.randomElement() ?? defaultChallenge(for: path, difficulty: difficulty)
+    private init() {}
+    
+    // MARK: - Main Generation Methods
+    
+    /// Generates a daily challenge based on user's training path and preferences
+    static func generateDailyChallenge(
+        for path: TrainingPath,
+        difficulty: DailyChallenge.ChallengeDifficulty = .standard,
+        date: Date = Date(),
+        excludeRecent: Bool = true
+    ) -> DailyChallenge {
         
-        return DailyChallenge(
-            title: randomChallenge.title,
-            description: randomChallenge.description,
+        // Get challenge templates for the path
+        let templates = getChallengeTemplates(for: path, difficulty: difficulty)
+        
+        // Filter out recently used challenges if requested
+        let availableTemplates = excludeRecent ? 
+            filterRecentlyUsed(templates, for: path) : templates
+        
+        // Select challenge based on user patterns and preferences
+        let selectedTemplate = selectOptimalChallenge(
+            from: availableTemplates,
+            for: path,
+            difficulty: difficulty
+        )
+        
+        // Create challenge instance
+        return createChallenge(from: selectedTemplate, for: date)
+    }
+    
+    /// Generates multiple challenge options for user selection
+    static func generateChallengeOptions(
+        for path: TrainingPath,
+        difficulty: DailyChallenge.ChallengeDifficulty,
+        count: Int = 3
+    ) -> [DailyChallenge] {
+        
+        let templates = getChallengeTemplates(for: path, difficulty: difficulty)
+        let availableTemplates = filterRecentlyUsed(templates, for: path)
+        
+        return availableTemplates
+            .shuffled()
+            .prefix(count)
+            .map { createChallenge(from: $0, for: Date()) }
+    }
+    
+    /// Generates a custom challenge using AI/user input
+    static func generateCustomChallenge(
+        for path: TrainingPath,
+        userPrompt: String,
+        difficulty: DailyChallenge.ChallengeDifficulty = .custom
+    ) async -> DailyChallenge {
+        
+        // This would integrate with AI service for custom generation
+        let customTemplate = await processCustomChallengeRequest(
+            userPrompt: userPrompt,
             path: path,
-            difficulty: difficulty,
-            date: Date()
+            difficulty: difficulty
+        )
+        
+        return createChallenge(from: customTemplate, for: Date())
+    }
+    
+    // MARK: - Challenge Template Management
+    
+    private static func getChallengeTemplates(
+        for path: TrainingPath,
+        difficulty: DailyChallenge.ChallengeDifficulty
+    ) -> [ChallengeTemplate] {
+        
+        // In production, this would fetch from Core Data or Supabase
+        return defaultChallengeTemplates
+            .filter { $0.path == path && $0.difficulty == difficulty }
+    }
+    
+    private static func filterRecentlyUsed(
+        _ templates: [ChallengeTemplate],
+        for path: TrainingPath
+    ) -> [ChallengeTemplate] {
+        
+        // Get recently used challenges (last 7 days)
+        let recentChallenges = getRecentChallenges(for: path, days: 7)
+        let recentTitles = Set(recentChallenges.map { $0.title })
+        
+        // Filter out recently used templates
+        let filtered = templates.filter { !recentTitles.contains($0.title) }
+        
+        // If too few options remain, include some recent ones
+        return filtered.count >= 3 ? filtered : templates
+    }
+    
+    private static func selectOptimalChallenge(
+        from templates: [ChallengeTemplate],
+        for path: TrainingPath,
+        difficulty: DailyChallenge.ChallengeDifficulty
+    ) -> ChallengeTemplate {
+        
+        // Smart selection based on user patterns
+        let userStats = getUserChallengeStats(for: path)
+        
+        // Weight templates based on:
+        // 1. User's success rate with similar challenges
+        // 2. Time since last challenge of this category
+        // 3. Current day of week patterns
+        // 4. User's mood/energy trends
+        
+        let scoredTemplates = templates.map { template in
+            (template: template, score: calculateChallengeScore(template, userStats: userStats))
+        }
+        
+        // Select highest scoring template, with some randomness
+        let sortedTemplates = scoredTemplates.sorted { $0.score > $1.score }
+        
+        // 70% chance to pick top choice, 30% chance to pick from top 3
+        let randomValue = Double.random(in: 0...1)
+        if randomValue < 0.7 || sortedTemplates.count == 1 {
+            return sortedTemplates.first?.template ?? templates.randomElement()!
+        } else {
+            let topThree = Array(sortedTemplates.prefix(3))
+            return topThree.randomElement()?.template ?? templates.randomElement()!
+        }
+    }
+    
+    private static func calculateChallengeScore(
+        _ template: ChallengeTemplate,
+        userStats: UserChallengeStats
+    ) -> Double {
+        var score = 1.0
+        
+        // Factor in success rate for this category
+        if let categoryRate = userStats.categorySuccessRates[template.category] {
+            score *= (0.5 + categoryRate) // Boost successful categories
+        }
+        
+        // Factor in time since last challenge of this type
+        let daysSinceLastCategory = userStats.daysSinceLastCategory[template.category] ?? 7
+        score *= min(Double(daysSinceLastCategory) / 7.0, 1.0) // Prefer variety
+        
+        // Factor in current day of week preferences
+        let currentDayOfWeek = Calendar.current.component(.weekday, from: Date())
+        if let dayPreference = userStats.dayOfWeekPreferences[currentDayOfWeek] {
+            score *= dayPreference
+        }
+        
+        // Factor in estimated completion time vs user's available time
+        let currentHour = Calendar.current.component(.hour, from: Date())
+        if currentHour >= 19 && template.estimatedTimeMinutes > 15 {
+            score *= 0.7 // Prefer shorter challenges in evening
+        }
+        
+        return score
+    }
+    
+    private static func createChallenge(
+        from template: ChallengeTemplate,
+        for date: Date
+    ) -> DailyChallenge {
+        
+        var challenge = DailyChallenge(
+            title: template.title,
+            description: template.description,
+            path: template.path,
+            difficulty: template.difficulty,
+            date: date,
+            category: template.category,
+            estimatedTimeMinutes: template.estimatedTimeMinutes,
+            tags: template.tags
+        )
+        
+        // Add some personalization
+        challenge = personalizeChallenge(challenge, template: template)
+        
+        return challenge
+    }
+    
+    private static func personalizeChallenge(
+        _ challenge: DailyChallenge,
+        template: ChallengeTemplate
+    ) -> DailyChallenge {
+        var personalizedChallenge = challenge
+        
+        // Personalize based on user preferences, time of day, etc.
+        let currentHour = Calendar.current.component(.hour, from: Date())
+        
+        // Morning-specific personalizations
+        if currentHour < 12 {
+            personalizedChallenge = addMorningContext(personalizedChallenge)
+        }
+        
+        // Evening-specific personalizations
+        if currentHour >= 18 {
+            personalizedChallenge = addEveningContext(personalizedChallenge)
+        }
+        
+        // Add seasonal or weather-based modifications
+        personalizedChallenge = addContextualModifications(personalizedChallenge)
+        
+        return personalizedChallenge
+    }
+    
+    // MARK: - Helper Methods
+    
+    private static func getRecentChallenges(for path: TrainingPath, days: Int) -> [DailyChallenge] {
+        // This would fetch from Core Data in production
+        let calendar = Calendar.current
+        let cutoffDate = calendar.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+        
+        // Simulate fetching recent challenges
+        return [] // Would return actual challenges from persistence
+    }
+    
+    private static func getUserChallengeStats(for path: TrainingPath) -> UserChallengeStats {
+        // This would analyze user's historical challenge data
+        return UserChallengeStats(
+            categorySuccessRates: [:],
+            daysSinceLastCategory: [:],
+            dayOfWeekPreferences: [:],
+            averageCompletionTime: [:],
+            preferredDifficulty: .standard
         )
     }
     
-    // MARK: - Challenge Templates
-    private struct ChallengeTemplate {
-        let title: String
-        let description: String
+    private static func addMorningContext(_ challenge: DailyChallenge) -> DailyChallenge {
+        var modified = challenge
+        
+        // Add weather-based modifications (if available)
+        let season = getCurrentSeason()
+        switch season {
+        case .winter:
+            if challenge.category == .physical {
+                modified.description += " Embrace the energy that comes from moving in colder weather."
+            }
+        case .summer:
+            if challenge.category == .physical && challenge.estimatedTimeMinutes > 20 {
+                modified.description += " Stay hydrated and find shade when needed."
+            }
+        case .spring, .fall:
+            if challenge.category == .physical {
+                modified.description += " Take advantage of the perfect weather for outdoor activities."
+            }
+        }
+        
+        // Add day-of-week contextual modifications
+        let dayOfWeek = Calendar.current.component(.weekday, from: Date())
+        switch dayOfWeek {
+        case 2...6: // Monday to Friday
+            if challenge.estimatedTimeMinutes > 30 {
+                modified.description += " Perfect for your focused weekday routine."
+            }
+        case 1, 7: // Weekend
+            if challenge.category == .social {
+                modified.description += " Weekends are perfect for connecting with others."
+            }
+        default:
+            break
+        }
+        
+        return modified
     }
     
-    // MARK: - Path-Specific Challenges
-    private static func getChallenges(for path: TrainingPath, difficulty: DailyChallenge.ChallengeDifficulty) -> [ChallengeTemplate] {
+    private static func getCurrentSeason() -> Season {
+        let month = Calendar.current.component(.month, from: Date())
+        switch month {
+        case 12, 1, 2: return .winter
+        case 3, 4, 5: return .spring
+        case 6, 7, 8: return .summer
+        case 9, 10, 11: return .fall
+        default: return .spring
+        }
+    }
+    
+    // MARK: - AI Integration
+    
+    private static func processCustomChallengeRequest(
+        userPrompt: String,
+        path: TrainingPath,
+        difficulty: DailyChallenge.ChallengeDifficulty
+    ) async -> ChallengeTemplate {
+        
+        // This would integrate with your AI service
+        // For now, return a template based on the prompt
+        
+        let estimatedTime = difficulty.estimatedTime
+        let category = inferCategoryFromPrompt(userPrompt)
+        
+        return ChallengeTemplate(
+            title: "Custom: \(userPrompt.prefix(30))...",
+            description: await generateChallengeDescription(from: userPrompt, path: path),
+            path: path,
+            difficulty: difficulty,
+            category: category,
+            estimatedTimeMinutes: estimatedTime,
+            tags: extractTagsFromPrompt(userPrompt)
+        )
+    }
+    
+    private static func inferCategoryFromPrompt(_ prompt: String) -> ChallengeCategory {
+        let lowercasePrompt = prompt.lowercased()
+        
+        if lowercasePrompt.contains("exercise") || lowercasePrompt.contains("workout") || lowercasePrompt.contains("run") {
+            return .physical
+        } else if lowercasePrompt.contains("meditate") || lowercasePrompt.contains("think") || lowercasePrompt.contains("focus") {
+            return .mental
+        } else if lowercasePrompt.contains("talk") || lowercasePrompt.contains("call") || lowercasePrompt.contains("meet") {
+            return .social
+        } else if lowercasePrompt.contains("phone") || lowercasePrompt.contains("social media") || lowercasePrompt.contains("screen") {
+            return .digital
+        } else if lowercasePrompt.contains("create") || lowercasePrompt.contains("write") || lowercasePrompt.contains("draw") {
+            return .creative
+        } else if lowercasePrompt.contains("nature") || lowercasePrompt.contains("gratitude") || lowercasePrompt.contains("values") {
+            return .spiritual
+        }
+        
+        return .general
+    }
+    
+    private static func extractTagsFromPrompt(_ prompt: String) -> [String] {
+        let lowercasePrompt = prompt.lowercased()
+        var tags: [String] = []
+        
+        let tagMappings = [
+            "morning": ["morning", "early"],
+            "evening": ["evening", "night"],
+            "quick": ["quick", "fast", "short"],
+            "challenging": ["hard", "difficult", "challenging"],
+            "outdoor": ["outside", "outdoor", "nature"],
+            "indoor": ["inside", "indoor", "home"],
+            "social": ["friends", "family", "people", "social"],
+            "solo": ["alone", "solo", "personal", "individual"]
+        ]
+        
+        for (tag, keywords) in tagMappings {
+            if keywords.contains(where: { lowercasePrompt.contains($0) }) {
+                tags.append(tag)
+            }
+        }
+        
+        return tags
+    }
+    
+    private static func generateChallengeDescription(
+        from prompt: String,
+        path: TrainingPath
+    ) async -> String {
+        // This would call your AI service to generate a proper description
+        // For now, return a formatted version of the prompt
+        
+        let pathContext = getPathContext(for: path)
+        return "\(prompt). \(pathContext)"
+    }
+    
+    private static func getPathContext(for path: TrainingPath) -> String {
         switch path {
         case .discipline:
-            return getDisciplineChallenges(difficulty: difficulty)
+            return "Focus on building consistency and willpower through this action."
         case .clarity:
-            return getClarityChallenges(difficulty: difficulty)
+            return "Use this practice to develop greater mental clarity and focus."
         case .confidence:
-            return getConfidenceChallenges(difficulty: difficulty)
+            return "Step into this challenge to build your inner confidence and courage."
         case .purpose:
-            return getPurposeChallenges(difficulty: difficulty)
+            return "Engage with this activity to connect with your deeper sense of purpose."
         case .authenticity:
-            return getAuthenticityChallenges(difficulty: difficulty)
+            return "Practice being true to yourself through this authentic expression."
         }
     }
     
-    // MARK: - Discipline Challenges
-    private static func getDisciplineChallenges(difficulty: DailyChallenge.ChallengeDifficulty) -> [ChallengeTemplate] {
-        switch difficulty {
-        case .micro:
-            return [
-                ChallengeTemplate(title: "No Sugar Until Sunset", description: "Avoid all added sugars, candy, and desserts until the sun goes down. Drink water when you crave something sweet."),
-                ChallengeTemplate(title: "Make Your Bed Perfectly", description: "Make your bed with military precision. Smooth corners, aligned pillows. Start your day with one immediate win."),
-                ChallengeTemplate(title: "Two-Minute Cold Shower", description: "End your shower with 2 minutes of cold water. Focus on controlled breathing, not fighting the discomfort."),
-                ChallengeTemplate(title: "Phone-Free First Hour", description: "Don't check your phone for the first hour after waking up. Use this time for intentional morning activities."),
-                ChallengeTemplate(title: "5 Push-ups Every Hour", description: "Set a timer and do 5 push-ups at the top of every hour you're awake. Build micro-habits of movement."),
-                ChallengeTemplate(title: "Say No to One Thing", description: "Decline one request, invitation, or temptation today. Practice the discipline of selective commitment."),
-                ChallengeTemplate(title: "Eat Lunch Standing", description: "Stand while eating your lunch today. Break the automatic pattern of always sitting while eating."),
-                ChallengeTemplate(title: "Take the Stairs", description: "Use stairs instead of elevators/escalators every time today. Choose the harder path when available."),
-                ChallengeTemplate(title: "Clean for 5 Minutes", description: "Set a timer for 5 minutes and clean something in your space. Build the habit of maintaining your environment."),
-                ChallengeTemplate(title: "No Complaints Out Loud", description: "Catch yourself before complaining verbally. If you notice a complaint coming, reframe it or stay silent.")
-            ]
-        case .standard:
-            return [
-                ChallengeTemplate(title: "24-Hour Social Media Fast", description: "Go 24 hours without checking any social media platforms. Notice the urges and redirect that energy productively."),
-                ChallengeTemplate(title: "Wake Up 30 Minutes Earlier", description: "Set your alarm 30 minutes earlier than usual. Use the extra time for something that matters to you."),
-                ChallengeTemplate(title: "No Processed Food Today", description: "Eat only whole, unprocessed foods today. If it comes in a package with more than 3 ingredients, avoid it."),
-                ChallengeTemplate(title: "Complete Your Most Avoided Task", description: "Identify the one task you've been putting off and complete it today. Start within the first 2 hours of your day."),
-                ChallengeTemplate(title: "30-Minute Walk Without Distractions", description: "Take a 30-minute walk with no phone, music, or podcasts. Just you, your thoughts, and movement."),
-                ChallengeTemplate(title: "Write 500 Words", description: "Write 500 words about anything - thoughts, goals, stories. Build the discipline of daily creative output."),
-                ChallengeTemplate(title: "One Meal Prep Session", description: "Prepare at least 3 meals for the week ahead. Build the discipline of planning and preparation."),
-                ChallengeTemplate(title: "Read Instead of Watch", description: "Replace all screen entertainment with reading today. Choose growth over passive consumption.")
-            ]
-        case .advanced:
-            return [
-                ChallengeTemplate(title: "48-Hour Dopamine Fast", description: "Avoid high-dopamine activities: social media, junk food, entertainment, shopping. Focus on basic needs and meaningful work."),
-                ChallengeTemplate(title: "Daily 5AM Club", description: "Wake up at 5 AM for the next 7 days. Use the early hours for personal development activities."),
-                ChallengeTemplate(title: "One Week No Excuses", description: "For 7 days, eliminate all excuses from your vocabulary and thoughts. When challenged, find solutions instead of reasons why not."),
-                ChallengeTemplate(title: "Create a New Keystone Habit", description: "Establish one new daily habit that will improve multiple areas of your life. Commit to it for 30 days starting today.")
-            ]
+    // MARK: - Challenge Validation
+    
+    static func validateChallenge(_ challenge: DailyChallenge) -> ChallengeValidationResult {
+        var issues: [String] = []
+        var suggestions: [String] = []
+        
+        // Check title length
+        if challenge.title.count < 5 {
+            issues.append("Title is too short")
+        } else if challenge.title.count > 100 {
+            issues.append("Title is too long")
         }
+        
+        // Check description length
+        if challenge.description.count < 20 {
+            issues.append("Description needs more detail")
+        } else if challenge.description.count > 500 {
+            suggestions.append("Consider shortening the description")
+        }
+        
+        // Check time estimate reasonableness
+        if challenge.estimatedTimeMinutes < 1 {
+            issues.append("Time estimate is too low")
+        } else if challenge.estimatedTimeMinutes > 120 {
+            suggestions.append("Very long challenge - consider breaking it down")
+        }
+        
+        // Check difficulty vs time alignment
+        let expectedTimeRange = challenge.difficulty.estimatedTime
+        if challenge.estimatedTimeMinutes > expectedTimeRange * 2 {
+            suggestions.append("Time estimate seems high for \(challenge.difficulty.displayName) difficulty")
+        }
+        
+        return ChallengeValidationResult(
+            isValid: issues.isEmpty,
+            issues: issues,
+            suggestions: suggestions
+        )
     }
     
-    // MARK: - Clarity Challenges
-    private static func getClarityChallenges(difficulty: DailyChallenge.ChallengeDifficulty) -> [ChallengeTemplate] {
-        switch difficulty {
-        case .micro:
-            return [
-                ChallengeTemplate(title: "Three Thoughts to Delete", description: "Write down 3 recurring negative or unproductive thoughts. Acknowledge them, then mentally 'delete' them."),
-                ChallengeTemplate(title: "5-Minute Breathing Focus", description: "Spend 5 minutes focusing only on your breath. When your mind wanders, gently return to breathing."),
-                ChallengeTemplate(title: "Name Your Current Emotion", description: "Every hour, pause and identify exactly what emotion you're feeling. Build emotional awareness."),
-                ChallengeTemplate(title: "Single-Task for One Hour", description: "Pick one important task and work on only that for one full hour. No multitasking, no distractions."),
-                ChallengeTemplate(title: "Question One Assumption", description: "Identify one thing you assume to be true about yourself or your situation. Question whether it's actually true."),
-                ChallengeTemplate(title: "Write Morning Priorities", description: "Before checking your phone, write down your top 3 priorities for the day. Let intention guide your day."),
-                ChallengeTemplate(title: "Observe Without Judging", description: "For 10 minutes, observe people around you without making any judgments. Just notice what you see."),
-                ChallengeTemplate(title: "One Distraction-Free Conversation", description: "Have one conversation today without checking your phone or letting your mind wander. Be fully present."),
-                ChallengeTemplate(title: "Pause Before Reacting", description: "Before responding to any frustration today, take 3 deep breaths. Create space between stimulus and response."),
-                ChallengeTemplate(title: "Mental Declutter", description: "Write down everything on your mind for 5 minutes. Get the mental noise out of your head and onto paper.")
-            ]
-        case .standard:
-            return [
-                ChallengeTemplate(title: "Morning Pages", description: "Write 3 pages of stream-of-consciousness thoughts first thing in the morning. Clear mental fog and gain clarity."),
-                ChallengeTemplate(title: "Digital Sunset", description: "No screens 2 hours before bedtime. Use this time for reflection, reading, or calming activities."),
-                ChallengeTemplate(title: "Mindful Eating Session", description: "Eat one meal in complete silence, focusing entirely on taste, texture, and the eating experience."),
-                ChallengeTemplate(title: "Values Inventory", description: "List your top 5 values and evaluate how well your current actions align with them. Identify gaps."),
-                ChallengeTemplate(title: "Fear Analysis", description: "Write about something you're afraid of. Break down whether it's rational and what you'd do if the fear wasn't there."),
-                ChallengeTemplate(title: "Energy Audit", description: "Track what activities give you energy vs. drain it throughout the day. Identify patterns and plan changes.")
-            ]
-        case .advanced:
-            return [
-                ChallengeTemplate(title: "Weekly Solitude Retreat", description: "Spend 4 hours alone with no entertainment, just thinking and reflecting. Create space for deep self-awareness."),
-                ChallengeTemplate(title: "Belief System Audit", description: "Examine and write about your core beliefs. Question which ones serve you and which ones limit you."),
-                ChallengeTemplate(title: "30-Day Meditation Streak", description: "Commit to meditating for at least 10 minutes every day for the next 30 days. Build consistent clarity practice.")
-            ]
-        }
+    // MARK: - Challenge Analytics
+    
+    static func analyzeChallengePerformance(for path: TrainingPath) -> ChallengeAnalytics {
+        // This would analyze user's challenge completion patterns
+        let recentChallenges = getRecentChallenges(for: path, days: 30)
+        
+        let totalChallenges = recentChallenges.count
+        let completedChallenges = recentChallenges.filter { $0.isCompleted }.count
+        let completionRate = totalChallenges > 0 ? Double(completedChallenges) / Double(totalChallenges) : 0.0
+        
+        let averageEffort = recentChallenges
+            .compactMap { $0.effortLevel }
+            .reduce(0, +) / max(1, recentChallenges.filter { $0.isCompleted }.count)
+        
+        let preferredCategories = analyzeCategoryPreferences(recentChallenges)
+        let optimalDifficulty = analyzeOptimalDifficulty(recentChallenges)
+        
+        return ChallengeAnalytics(
+            completionRate: completionRate,
+            averageEffort: Double(averageEffort),
+            preferredCategories: preferredCategories,
+            optimalDifficulty: optimalDifficulty,
+            streakData: analyzeStreakPatterns(recentChallenges)
+        )
     }
     
-    // MARK: - Confidence Challenges
-    private static func getConfidenceChallenges(difficulty: DailyChallenge.ChallengeDifficulty) -> [ChallengeTemplate] {
-        switch difficulty {
-        case .micro:
-            return [
-                ChallengeTemplate(title: "Start a Conversation", description: "Initiate a conversation with a stranger today. Could be a cashier, neighbor, or someone at the gym. Practice social courage."),
-                ChallengeTemplate(title: "Speak Up in a Group", description: "Share your opinion in a group conversation today. Don't wait for the perfect moment - just contribute authentically."),
-                ChallengeTemplate(title: "Make Eye Contact", description: "Maintain strong eye contact during every conversation today. Practice confident nonverbal communication."),
-                ChallengeTemplate(title: "Power Pose for 2 Minutes", description: "Stand in a confident power pose (hands on hips, chest out) for 2 minutes. Embody confidence physically."),
-                ChallengeTemplate(title: "Ask for Something", description: "Ask for something you want today - a discount, help with a task, or someone's time. Practice making requests confidently."),
-                ChallengeTemplate(title: "Give Someone a Compliment", description: "Give a genuine, specific compliment to someone. Practice positive social interaction and spreading good energy."),
-                ChallengeTemplate(title: "Speak 10% Louder", description: "Speak slightly louder than you normally would in conversations today. Project your voice with intention."),
-                ChallengeTemplate(title: "Share an Unpopular Opinion", description: "Respectfully share an opinion you hold that might be unpopular. Practice standing by your authentic thoughts."),
-                ChallengeTemplate(title: "Introduce Yourself First", description: "In any new social situation today, be the first person to introduce yourself. Take social leadership."),
-                ChallengeTemplate(title: "Correct Someone Politely", description: "If someone gets a fact wrong in conversation, politely correct them. Practice asserting truth respectfully.")
-            ]
-        case .standard:
-            return [
-                ChallengeTemplate(title: "Give a 5-Minute Presentation", description: "Present something to a group for 5 minutes - at work, with friends, or even record yourself. Practice confident expression."),
-                ChallengeTemplate(title: "Negotiate Something", description: "Negotiate a better deal on something today - salary, price, terms, or conditions. Practice advocating for yourself."),
-                ChallengeTemplate(title: "Host a Social Gathering", description: "Organize and host a social gathering with friends, colleagues, or neighbors. Take social leadership."),
-                ChallengeTemplate(title: "Cold Call/Email Someone", description: "Reach out to someone you don't know personally for networking, learning, or business. Practice bold outreach."),
-                ChallengeTemplate(title: "Dress Up for No Reason", description: "Dress better than required for your normal day. Practice carrying yourself with elevated confidence."),
-                ChallengeTemplate(title: "Lead a Group Decision", description: "Take charge when your group is indecisive about plans. Practice decisive leadership in social settings.")
-            ]
-        case .advanced:
-            return [
-                ChallengeTemplate(title: "Public Speaking Challenge", description: "Sign up for an open mic, Toastmasters, or give a presentation to a large group. Face your fear of public attention."),
-                ChallengeTemplate(title: "Week of Bold Asks", description: "For 7 days, make one bold ask each day - for opportunities, connections, or experiences you want."),
-                ChallengeTemplate(title: "Social Media Confidence", description: "Post something vulnerable or authentic on social media. Practice being seen for who you truly are.")
-            ]
+    private static func analyzeCategoryPreferences(_ challenges: [DailyChallenge]) -> [ChallengeCategory: Double] {
+        let categoryGroups = Dictionary(grouping: challenges) { $0.category }
+        var preferences: [ChallengeCategory: Double] = [:]
+        
+        for (category, categoryChallenges) in categoryGroups {
+            let completedCount = categoryChallenges.filter { $0.isCompleted }.count
+            let rate = Double(completedCount) / Double(categoryChallenges.count)
+            preferences[category] = rate
         }
+        
+        return preferences
     }
     
-    // MARK: - Purpose Challenges
-    private static func getPurposeChallenges(difficulty: DailyChallenge.ChallengeDifficulty) -> [ChallengeTemplate] {
-        switch difficulty {
-        case .micro:
-            return [
-                ChallengeTemplate(title: "Review Your 5-Year Vision", description: "Spend 3 minutes reviewing or creating your vision for where you want to be in 5 years. Connect with your bigger picture."),
-                ChallengeTemplate(title: "Ask 'Why' Five Times", description: "Pick one goal or activity and ask 'why' five times in a row. Dig deep into your true motivations."),
-                ChallengeTemplate(title: "Write Your Eulogy", description: "Write 2-3 sentences about how you'd want to be remembered. Clarify what legacy you want to create."),
-                ChallengeTemplate(title: "Identify Your Gift", description: "Write down one unique skill, perspective, or ability you have that could benefit others. Recognize your value."),
-                ChallengeTemplate(title: "Connect Daily Actions to Purpose", description: "Choose 3 activities from today and connect them to your larger life purpose. Find meaning in mundane tasks."),
-                ChallengeTemplate(title: "Help Someone Today", description: "Do something helpful for someone else without being asked. Practice being of service to others."),
-                ChallengeTemplate(title: "Write a Letter to Future You", description: "Write a short letter to yourself 5 years from now. What do you want to tell your future self?"),
-                ChallengeTemplate(title: "List Your Core Values", description: "Write down your top 3 core values and one way you can honor each one today."),
-                ChallengeTemplate(title: "Find Meaning in Struggle", description: "Identify one current challenge and write how it's helping you grow or serve a larger purpose."),
-                ChallengeTemplate(title: "Practice Gratitude with Purpose", description: "Write 3 things you're grateful for and how each one connects to your life's direction.")
-            ]
-        case .standard:
-            return [
-                ChallengeTemplate(title: "Create a Personal Mission Statement", description: "Write a one-paragraph mission statement for your life. What are you here to do and become?"),
-                ChallengeTemplate(title: "Volunteer for 2 Hours", description: "Spend 2 hours volunteering for a cause you care about. Connect with purpose through service."),
-                ChallengeTemplate(title: "Career Alignment Check", description: "Evaluate how well your current career aligns with your values and purpose. Write an action plan for improvement."),
-                ChallengeTemplate(title: "Mentor Someone", description: "Offer to mentor or help someone who's earlier in a journey you've traveled. Share your knowledge and experience."),
-                ChallengeTemplate(title: "Create Something Meaningful", description: "Create something (art, writing, video, project) that expresses your values or helps others."),
-                ChallengeTemplate(title: "Plan Your Ideal Day", description: "Design what your perfect day would look like if you were living completely aligned with your purpose.")
-            ]
-        case .advanced:
-            return [
-                ChallengeTemplate(title: "Purpose-Driven Project", description: "Start a 30-day project that aligns with your purpose and could impact others positively."),
-                ChallengeTemplate(title: "Life Design Workshop", description: "Spend 4 hours designing your ideal life 10 years from now. Create a detailed vision and action plan."),
-                ChallengeTemplate(title: "Impact Assessment", description: "Evaluate how your current life choices impact others and the world. Make adjustments to increase positive impact.")
-            ]
+    private static func analyzeOptimalDifficulty(_ challenges: [DailyChallenge]) -> DailyChallenge.ChallengeDifficulty {
+        let difficultyGroups = Dictionary(grouping: challenges) { $0.difficulty }
+        var bestRate = 0.0
+        var optimalDifficulty: DailyChallenge.ChallengeDifficulty = .standard
+        
+        for (difficulty, difficultyChallenges) in difficultyGroups {
+            let completedCount = difficultyChallenges.filter { $0.isCompleted }.count
+            let rate = Double(completedCount) / Double(difficultyChallenges.count)
+            
+            if rate > bestRate {
+                bestRate = rate
+                optimalDifficulty = difficulty
+            }
         }
+        
+        return optimalDifficulty
     }
     
-    // MARK: - Authenticity Challenges
-    private static func getAuthenticityChallenges(difficulty: DailyChallenge.ChallengeDifficulty) -> [ChallengeTemplate] {
-        switch difficulty {
-        case .micro:
-            return [
-                ChallengeTemplate(title: "Express a True Opinion", description: "Share your honest opinion about something, even if it goes against the group. Practice authentic self-expression."),
-                ChallengeTemplate(title: "Wear What You Actually Like", description: "Dress in a way that reflects your true taste, not what you think others expect. Express yourself through appearance."),
-                ChallengeTemplate(title: "Say No Authentically", description: "Decline something you don't want to do instead of going along with it. Honor your true preferences."),
-                ChallengeTemplate(title: "Share a Personal Story", description: "Tell someone a story that reveals something real about you. Practice vulnerable authenticity."),
-                ChallengeTemplate(title: "Stop Pretending", description: "Identify one way you're pretending to be someone you're not and stop doing it today."),
-                ChallengeTemplate(title: "Express an Emotion", description: "Instead of hiding how you feel, express one authentic emotion to someone appropriate today."),
-                ChallengeTemplate(title: "Do Something You Enjoy", description: "Spend time on an activity you genuinely enjoy but might feel embarrassed about. Embrace your authentic interests."),
-                ChallengeTemplate(title: "Speak Your Mind", description: "In one conversation, say exactly what you're thinking instead of filtering it through what you think they want to hear."),
-                ChallengeTemplate(title: "Admit You Don't Know", description: "When you don't know something, admit it honestly instead of pretending or deflecting."),
-                ChallengeTemplate(title: "Show Your Quirks", description: "Let one of your quirky personality traits show today instead of hiding it to fit in.")
-            ]
-        case .standard:
-            return [
-                ChallengeTemplate(title: "Have a Difficult Conversation", description: "Address something you've been avoiding discussing with someone important in your life. Choose authenticity over comfort."),
-                ChallengeTemplate(title: "Create Authentic Content", description: "Share something genuine about yourself on social media or in writing. Show your real self to the world."),
-                ChallengeTemplate(title: "Set a Boundary", description: "Establish a clear boundary with someone in your life. Protect your authentic self by saying what you will and won't accept."),
-                ChallengeTemplate(title: "Pursue Your Interest", description: "Take action on something you're genuinely interested in but haven't pursued due to fear of judgment."),
-                ChallengeTemplate(title: "Be Vulnerable with Someone", description: "Share a fear, insecurity, or struggle with someone you trust. Practice authentic connection through vulnerability."),
-                ChallengeTemplate(title: "Quit Something Inauthentic", description: "Stop doing something you only do because you feel you 'should' but that doesn't align with your true self.")
-            ]
-        case .advanced:
-            return [
-                ChallengeTemplate(title: "Live Your Values Publicly", description: "For one week, make decisions based purely on your authentic values, regardless of what others might think."),
-                ChallengeTemplate(title: "Authentic Life Audit", description: "Examine all areas of your life and identify what's authentic vs. what's performance. Make a plan to increase authenticity."),
-                ChallengeTemplate(title: "Share Your Truth", description: "Write and share (blog, video, conversation) about something you've never been fully honest about but that defines who you are.")
-            ]
+    private static func analyzeStreakPatterns(_ challenges: [DailyChallenge]) -> StreakAnalysis {
+        let sortedChallenges = challenges.sorted { $0.date < $1.date }
+        var streaks: [Int] = []
+        var currentStreak = 0
+        
+        for challenge in sortedChallenges {
+            if challenge.isCompleted {
+                currentStreak += 1
+            } else {
+                if currentStreak > 0 {
+                    streaks.append(currentStreak)
+                    currentStreak = 0
+                }
+            }
         }
-    }
-    
-    // MARK: - Fallback Challenge
-    private static func defaultChallenge(for path: TrainingPath, difficulty: DailyChallenge.ChallengeDifficulty) -> ChallengeTemplate {
-        switch path {
-        case .discipline:
-            return ChallengeTemplate(title: "Build One Small Habit", description: "Choose one small positive action and commit to doing it consistently today.")
-        case .clarity:
-            return ChallengeTemplate(title: "5-Minute Reflection", description: "Spend 5 minutes in quiet reflection about your current thoughts and feelings.")
-        case .confidence:
-            return ChallengeTemplate(title: "Take One Bold Action", description: "Do one thing today that requires courage and pushes your comfort zone.")
-        case .purpose:
-            return ChallengeTemplate(title: "Connect to Your Why", description: "Spend time connecting your daily actions to your larger life purpose.")
-        case .authenticity:
-            return ChallengeTemplate(title: "Be True to Yourself", description: "Make one decision today based purely on your authentic self, not what others expect.")
+        
+        if currentStreak > 0 {
+            streaks.append(currentStreak)
         }
+        
+        return StreakAnalysis(
+            averageStreakLength: streaks.isEmpty ? 0 : Double(streaks.reduce(0, +)) / Double(streaks.count),
+            longestStreak: streaks.max() ?? 0,
+            totalStreaks: streaks.count
+        )
     }
 }
+
+// MARK: - Supporting Models
+
+struct ChallengeTemplate {
+    let title: String
+    let description: String
+    let path: TrainingPath
+    let difficulty: DailyChallenge.ChallengeDifficulty
+    let category: ChallengeCategory
+    let estimatedTimeMinutes: Int
+    let tags: [String]
+    let priority: Int // Higher number = higher priority
+    let isActive: Bool
+    
+    init(title: String, description: String, path: TrainingPath, difficulty: DailyChallenge.ChallengeDifficulty, category: ChallengeCategory, estimatedTimeMinutes: Int, tags: [String] = [], priority: Int = 1, isActive: Bool = true) {
+        self.title = title
+        self.description = description
+        self.path = path
+        self.difficulty = difficulty
+        self.category = category
+        self.estimatedTimeMinutes = estimatedTimeMinutes
+        self.tags = tags
+        self.priority = priority
+        self.isActive = isActive
+    }
+}
+
+struct UserChallengeStats {
+    let categorySuccessRates: [ChallengeCategory: Double]
+    let daysSinceLastCategory: [ChallengeCategory: Int]
+    let dayOfWeekPreferences: [Int: Double] // Weekday (1-7) to preference score
+    let averageCompletionTime: [ChallengeCategory: Double]
+    let preferredDifficulty: DailyChallenge.ChallengeDifficulty
+}
+
+struct ChallengeValidationResult {
+    let isValid: Bool
+    let issues: [String]
+    let suggestions: [String]
+}
+
+struct ChallengeAnalytics {
+    let completionRate: Double
+    let averageEffort: Double
+    let preferredCategories: [ChallengeCategory: Double]
+    let optimalDifficulty: DailyChallenge.ChallengeDifficulty
+    let streakData: StreakAnalysis
+}
+
+struct StreakAnalysis {
+    let averageStreakLength: Double
+    let longestStreak: Int
+    let totalStreaks: Int
+}
+
+enum Season {
+    case spring, summer, fall, winter
+}
+
+// MARK: - Default Challenge Templates
+
+extension ChallengeGenerator {
+    static let defaultChallengeTemplates: [ChallengeTemplate] = [
+        
+        // MARK: - Discipline Challenges
+        
+        // Micro Discipline Challenges
+        ChallengeTemplate(
+            title: "No Phone First Hour",
+            description: "Keep your phone in another room for the first hour after waking up. Start your day with intention instead of distraction.",
+            path: .discipline,
+            difficulty: .micro,
+            category: .digital,
+            estimatedTimeMinutes: 60,
+            tags: ["morning", "digital detox"],
+            priority: 3
+        ),
+        
+        ChallengeTemplate(
+            title: "Cold Shower Finish",
+            description: "End your regular shower with 30 seconds of cold water. Build mental toughness through voluntary discomfort.",
+            path: .discipline,
+            difficulty: .micro,
+            category: .physical,
+            estimatedTimeMinutes: 1,
+            tags: ["cold exposure", "morning"],
+            priority: 2
+        ),
+        
+        ChallengeTemplate(
+            title: "Make Your Bed",
+            description: "Make your bed immediately after getting up. Start your day with a completed task and an organized space.",
+            path: .discipline,
+            difficulty: .micro,
+            category: .general,
+            estimatedTimeMinutes: 3,
+            tags: ["morning", "organization"],
+            priority: 1
+        ),
+        
+        ChallengeTemplate(
+            title: "10 Push-ups Now",
+            description: "Drop and do 10 push-ups right now, regardless of where you are. Build the habit of immediate action.",
+            path: .discipline,
+            difficulty: .micro,
+            category: .physical,
+            estimatedTimeMinutes: 2,
+            tags: ["exercise", "immediate action"],
+            priority: 2
+        ),
+        
+        // Standard Discipline Challenges
+        ChallengeTemplate(
+            title: "No Social Media Until Noon",
+            description: "Avoid all social media platforms until 12 PM. Use your morning mental energy for productive activities instead.",
+            path: .discipline,
+            difficulty: .standard,
+            category: .digital,
+            estimatedTimeMinutes: 15,
+            tags: ["digital detox", "morning"],
+            priority: 3
+        ),
+        
+        ChallengeTemplate(
+            title: "Complete Your Most Important Task First",
+            description: "Identify your most important task for today and complete it before checking email, messages, or news.",
+            path: .discipline,
+            difficulty: .standard,
+            category: .mental,
+            estimatedTimeMinutes: 45,
+            tags: ["productivity", "priorities"],
+            priority: 4
+        ),
+        
+        ChallengeTemplate(
+            title: "20-Minute Walk",
+            description: "Take a 20-minute walk outside without your phone, podcasts, or music. Practice being present with your thoughts.",
+            path: .discipline,
+            difficulty: .standard,
+            category: .physical,
+            estimatedTimeMinutes: 20,
+            tags: ["walking", "mindfulness", "outdoor"],
+            priority: 2
+        ),
+        
+        // MARK: - Clarity Challenges
+        
+        // Micro Clarity Challenges
+        ChallengeTemplate(
+            title: "Three Deep Breaths",
+            description: "Take three slow, deep breaths focusing only on the sensation of breathing. Reset your mental state in under a minute.",
+            path: .clarity,
+            difficulty: .micro,
+            category: .mental,
+            estimatedTimeMinutes: 1,
+            tags: ["breathing", "mindfulness"],
+            priority: 1
+        ),
+        
+        ChallengeTemplate(
+            title: "Write Down 3 Thoughts to Delete",
+            description: "Identify three negative or unproductive thoughts you've had today and write them down to release them.",
+            path: .clarity,
+            difficulty: .micro,
+            category: .mental,
+            estimatedTimeMinutes: 3,
+            tags: ["journaling", "mental clarity"],
+            priority: 3
+        ),
+        
+        ChallengeTemplate(
+            title: "5-Minute Mind Dump",
+            description: "Set a timer for 5 minutes and write down everything on your mind without stopping or editing.",
+            path: .clarity,
+            difficulty: .micro,
+            category: .mental,
+            estimatedTimeMinutes: 5,
+            tags: ["journaling", "mental clarity"],
+            priority: 2
+        ),
+        
+        // Standard Clarity Challenges
+        ChallengeTemplate(
+            title: "10-Minute Meditation",
+            description: "Sit quietly for 10 minutes focusing on your breath. Notice when your mind wanders and gently return to breathing.",
+            path: .clarity,
+            difficulty: .standard,
+            category: .mental,
+            estimatedTimeMinutes: 10,
+            tags: ["meditation", "mindfulness"],
+            priority: 4
+        ),
+        
+        ChallengeTemplate(
+            title: "Digital Sunset",
+            description: "Turn off all screens 1 hour before your planned bedtime. Use this time for reading, journaling, or reflection.",
+            path: .clarity,
+            difficulty: .standard,
+            category: .digital,
+            estimatedTimeMinutes: 60,
+            tags: ["digital detox", "evening", "sleep"],
+            priority: 3
+        ),
+        
+        // MARK: - Confidence Challenges
+        
+        // Micro Confidence Challenges
+        ChallengeTemplate(
+            title: "Compliment a Stranger",
+            description: "Give a genuine compliment to someone you don't know. Practice expressing positivity and connecting with others.",
+            path: .confidence,
+            difficulty: .micro,
+            category: .social,
+            estimatedTimeMinutes: 2,
+            tags: ["social", "kindness"],
+            priority: 3
+        ),
+        
+        ChallengeTemplate(
+            title: "Speak Up in a Conversation",
+            description: "The next time you're in a group conversation, share your opinion on the topic being discussed.",
+            path: .confidence,
+            difficulty: .micro,
+            category: .social,
+            estimatedTimeMinutes: 5,
+            tags: ["social", "voice"],
+            priority: 4
+        ),
+        
+        ChallengeTemplate(
+            title: "Stand Tall for 5 Minutes",
+            description: "Spend 5 minutes standing or sitting with perfect posture. Embody confidence through your physical presence.",
+            path: .confidence,
+            difficulty: .micro,
+            category: .physical,
+            estimatedTimeMinutes: 5,
+            tags: ["posture", "embodiment"],
+            priority: 1
+        ),
+        
+        // Standard Confidence Challenges
+        ChallengeTemplate(
+            title: "Start a Conversation with Someone New",
+            description: "Initiate a conversation with someone you haven't talked to before. Practice stepping outside your social comfort zone.",
+            path: .confidence,
+            difficulty: .standard,
+            category: .social,
+            estimatedTimeMinutes: 10,
+            tags: ["social", "networking"],
+            priority: 4
+        ),
+        
+        ChallengeTemplate(
+            title: "Record a 2-Minute Video of Yourself",
+            description: "Record yourself talking about something you're passionate about. Practice being comfortable with your own voice and image.",
+            path: .confidence,
+            difficulty: .standard,
+            category: .creative,
+            estimatedTimeMinutes: 15,
+            tags: ["self-expression", "video"],
+            priority: 3
+        ),
+        
+        // MARK: - Purpose Challenges
+        
+        // Micro Purpose Challenges
+        ChallengeTemplate(
+            title: "Write Your 'Why' for Today",
+            description: "Write one sentence describing why today matters to you and what you want to accomplish.",
+            path: .purpose,
+            difficulty: .micro,
+            category: .spiritual,
+            estimatedTimeMinutes: 3,
+            tags: ["reflection", "purpose"],
+            priority: 2
+        ),
+        
+        ChallengeTemplate(
+            title: "Identify One Core Value in Action",
+            description: "Notice when you acted in alignment with one of your core values today and write it down.",
+            path: .purpose,
+            difficulty: .micro,
+            category: .spiritual,
+            estimatedTimeMinutes: 4,
+            tags: ["values", "reflection"],
+            priority: 3
+        ),
+        
+        // Standard Purpose Challenges
+        ChallengeTemplate(
+            title: "Review Your 5-Year Vision",
+            description: "Spend 15 minutes reviewing and refining your vision for where you want to be in 5 years.",
+            path: .purpose,
+            difficulty: .standard,
+            category: .spiritual,
+            estimatedTimeMinutes: 15,
+            tags: ["vision", "planning"],
+            priority: 4
+        ),
+        
+        ChallengeTemplate(
+            title: "Write a Letter to Future You",
+            description: "Write a letter to yourself one year from now. Share your current challenges, hopes, and advice.",
+            path: .purpose,
+            difficulty: .standard,
+            category: .creative,
+            estimatedTimeMinutes: 20,
+            tags: ["reflection", "future self"],
+            priority: 3
+        ),
+        
+        // MARK: - Authenticity Challenges
+        
+        // Micro Authenticity Challenges
+        ChallengeTemplate(
+            title: "Express One Genuine Emotion",
+            description: "Share how you're really feeling with someone instead of giving the default 'I'm fine' response.",
+            path: .authenticity,
+            difficulty: .micro,
+            category: .social,
+            estimatedTimeMinutes: 3,
+            tags: ["emotions", "honesty"],
+            priority: 3
+        ),
+        
+        ChallengeTemplate(
+            title: "Say No to Something",
+            description: "Practice saying no to a request that doesn't align with your priorities or values today.",
+            path: .authenticity,
+            difficulty: .micro,
+            category: .social,
+            estimatedTimeMinutes: 2,
+            tags: ["boundaries", "saying no"],
+            priority: 4
+        ),
+        
+        // Standard Authenticity Challenges
+        ChallengeTemplate(
+            title: "Share Something Vulnerable",
+            description: "Share something personal or vulnerable with someone you trust. Practice authentic connection.",
+            path: .authenticity,
+            difficulty: .standard,
+            category: .social,
+            estimatedTimeMinutes: 15,
+            tags: ["vulnerability", "connection"],
+            priority: 4
+        ),
+        
+        ChallengeTemplate(
+            title: "Do Something That Feels True to You",
+            description: "Engage in an activity that feels authentically 'you,' even if others might not understand or approve.",
+            path: .authenticity,
+            difficulty: .standard,
+            category: .creative,
+            estimatedTimeMinutes: 30,
+            tags: ["self-expression", "authenticity"],
+            priority: 3
+        )
+    ]
+}// Add morning-specific context to description
+        if challenge.path == .discipline && challenge.category == .physical {
+            modified.description += " Start your day with intention and energy."
+        } else if challenge.path == .clarity && challenge.category == .mental {
+            modified.description += " Begin your day with clarity and focus."
+        }
+        
+        return modified
+    }
+    
+    private static func addEveningContext(_ challenge: DailyChallenge) -> DailyChallenge {
+        var modified = challenge
+        
+        // Add evening-specific context
+        if challenge.category == .physical {
+            modified.description += " Wind down your day with purposeful movement."
+        } else if challenge.category == .mental {
+            modified.description += " Reflect on your day and prepare for tomorrow."
+        }
+        
+        return modified
+    }
+    
+    private static func addContextualModifications(_ challenge: DailyChallenge) -> DailyChallenge {
+        var modified = challenge
+        
+        
