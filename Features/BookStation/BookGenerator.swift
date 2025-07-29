@@ -1,439 +1,652 @@
 import Foundation
 
-// MARK: - Book Generator
+// MARK: - Enhanced Book Generator
 struct BookGenerator {
     
     // MARK: - Public Interface
-    static func generateRecommendations(for path: TrainingPath, count: Int = 3) -> [BookRecommendation] {
-        let allBooks = getBooks(for: path)
-        let shuffledBooks = allBooks.shuffled()
-        let selectedBooks = Array(shuffledBooks.prefix(count))
+    
+    /// Generates personalized book recommendations based on user's path, progress, and preferences
+    static func generateRecommendations(
+        for path: TrainingPath,
+        userLevel: UserLevel = .beginner,
+        currentStreak: Int = 0,
+        recentChallenges: [String] = [],
+        count: Int = 3
+    ) -> [BookRecommendation] {
+        let templates = getAdvancedBookTemplates(for: path, userLevel: userLevel)
+        let scoredBooks = scoreBooks(templates, for: path, userLevel: userLevel, currentStreak: currentStreak, recentChallenges: recentChallenges)
+        let selectedBooks = Array(scoredBooks.prefix(count))
         
-        return selectedBooks.map { template in
-            BookRecommendation(
-                title: template.title,
-                author: template.author,
-                path: path,
-                summary: template.summary,
-                keyInsight: template.keyInsight,
-                dailyAction: template.dailyAction,
-                coverImageURL: template.coverImageURL,
-                amazonURL: template.amazonURL,
-                dateAdded: Date()
-            )
+        return selectedBooks.map { scoredBook in
+            var book = scoredBook.template.toBookRecommendation(for: path)
+            book.aiRecommendationReason = generateAIRecommendationReason(book, score: scoredBook.score, userLevel: userLevel, path: path)
+            book.priorityLevel = min(5, max(1, Int(scoredBook.score * 5)))
+            return book
         }
     }
     
-    static func getBookOfTheDay(for path: TrainingPath) -> BookRecommendation? {
-        let books = getBooks(for: path)
-        guard let randomBook = books.randomElement() else { return nil }
+    /// Gets the featured book of the day with dynamic AI insights
+    static func getBookOfTheDay(for path: TrainingPath, userLevel: UserLevel = .beginner) -> BookRecommendation? {
+        let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
+        let templates = getAdvancedBookTemplates(for: path, userLevel: userLevel)
         
-        return BookRecommendation(
-            title: randomBook.title,
-            author: randomBook.author,
-            path: path,
-            summary: randomBook.summary,
-            keyInsight: randomBook.keyInsight,
-            dailyAction: randomBook.dailyAction,
-            coverImageURL: randomBook.coverImageURL,
-            amazonURL: randomBook.amazonURL,
-            dateAdded: Date()
+        // Use day of year as seed for consistent daily selection
+        var generator = SeededRandomNumberGenerator(seed: dayOfYear)
+        guard let template = templates.shuffled(using: &generator).first else { return nil }
+        
+        var book = template.toBookRecommendation(for: path)
+        book.dailyInsight = generateDailyInsight(for: book, path: path)
+        book.todaysChallenge = generateBookChallenge(for: book, path: path)
+        
+        return book
+    }
+    
+    /// Searches books with AI-enhanced relevance scoring
+    static func searchBooks(
+        for path: TrainingPath,
+        query: String,
+        userLevel: UserLevel = .beginner,
+        filters: BookFilters = BookFilters()
+    ) -> [BookRecommendation] {
+        let allTemplates = getAllBookTemplates()
+        let pathTemplates = allTemplates.filter { $0.primaryPath == path || $0.secondaryPaths.contains(path) }
+        
+        let filteredBooks = pathTemplates.filter { template in
+            matchesSearchQuery(template, query: query) && matchesFilters(template, filters: filters)
+        }
+        
+        let scoredBooks = scoreSearchResults(filteredBooks, query: query, path: path, userLevel: userLevel)
+        
+        return scoredBooks.map { scoredBook in
+            var book = scoredBook.template.toBookRecommendation(for: path)
+            book.searchRelevanceScore = scoredBook.score
+            return book
+        }
+    }
+    
+    /// Generates book recommendations based on user's reading history and goals
+    static func getPersonalizedRecommendations(
+        for path: TrainingPath,
+        readBooks: [BookRecommendation],
+        savedBooks: [BookRecommendation],
+        userGoals: [String] = [],
+        count: Int = 5
+    ) -> [BookRecommendation] {
+        let userProfile = analyzeReadingProfile(readBooks: readBooks, savedBooks: savedBooks)
+        let templates = getAdvancedBookTemplates(for: path, userLevel: userProfile.level)
+        
+        let recommendations = templates.compactMap { template -> ScoredBook? in
+            let compatibilityScore = calculateCompatibilityScore(template, with: userProfile)
+            let noveltyScore = calculateNoveltyScore(template, against: readBooks + savedBooks)
+            let goalAlignmentScore = calculateGoalAlignmentScore(template, goals: userGoals)
+            
+            let totalScore = (compatibilityScore * 0.4) + (noveltyScore * 0.3) + (goalAlignmentScore * 0.3)
+            
+            return ScoredBook(template: template, score: totalScore)
+        }
+        .sorted { $0.score > $1.score }
+        .prefix(count)
+        
+        return Array(recommendations).map { scoredBook in
+            var book = scoredBook.template.toBookRecommendation(for: path)
+            book.aiRecommendationReason = generatePersonalizedReason(scoredBook.template, score: scoredBook.score, profile: userProfile)
+            return book
+        }
+    }
+    
+    /// Generates AI-powered daily book insight with actionable advice
+    static func generateDailyBookInsight(for path: TrainingPath, userLevel: UserLevel = .beginner) -> DailyBookInsight? {
+        guard let featuredBook = getBookOfTheDay(for: path, userLevel: userLevel) else { return nil }
+        
+        let insights = getPathSpecificInsights(for: path)
+        let dayIndex = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
+        let selectedInsight = insights[dayIndex % insights.count]
+        
+        return DailyBookInsight(
+            content: selectedInsight.content,
+            bookTitle: featuredBook.title,
+            category: path.displayName,
+            actionItem: selectedInsight.actionItem,
+            deepDive: generateDeepDiveQuestion(insight: selectedInsight, path: path),
+            readingTime: estimateReadingTime(selectedInsight.content)
         )
     }
     
-    static func searchBooks(for path: TrainingPath, query: String) -> [BookRecommendation] {
-        let allBooks = getBooks(for: path)
-        let filteredBooks = allBooks.filter { book in
-            book.title.localizedCaseInsensitiveContains(query) ||
-            book.author.localizedCaseInsensitiveContains(query) ||
-            book.summary.localizedCaseInsensitiveContains(query) ||
-            book.keyInsight.localizedCaseInsensitiveContains(query)
+    // MARK: - Book Discovery Features
+    
+    /// Generates "If you liked X, try Y" recommendations
+    static func getSimilarBooks(to book: BookRecommendation, count: Int = 3) -> [BookRecommendation] {
+        let allTemplates = getAllBookTemplates()
+        
+        let similarBooks = allTemplates.compactMap { template -> ScoredBook? in
+            let similarity = calculateBookSimilarity(book, template: template)
+            return similarity > 0.3 ? ScoredBook(template: template, score: similarity) : nil
+        }
+        .sorted { $0.score > $1.score }
+        .prefix(count)
+        
+        return Array(similarBooks).map { $0.template.toBookRecommendation(for: book.path) }
+    }
+    
+    /// Gets trending books for a specific path based on current events and seasons
+    static func getTrendingBooks(for path: TrainingPath, count: Int = 5) -> [BookRecommendation] {
+        let currentMonth = Calendar.current.component(.month, from: Date())
+        let season = getSeason(for: currentMonth)
+        
+        let templates = getAdvancedBookTemplates(for: path)
+        let trendingBooks = templates.filter { template in
+            template.seasonalRelevance.contains(season) || template.trendingScore > 0.7
+        }
+        .sorted { $0.trendingScore > $1.trendingScore }
+        .prefix(count)
+        
+        return Array(trendingBooks).map { $0.toBookRecommendation(for: path) }
+    }
+    
+    // MARK: - AI Enhancement Methods
+    
+    private static func generateAIRecommendationReason(
+        _ book: BookRecommendation,
+        score: Double,
+        userLevel: UserLevel,
+        path: TrainingPath
+    ) -> String {
+        let levelText = userLevel == .beginner ? "foundational" : userLevel == .intermediate ? "practical" : "advanced"
+        let pathContext = getPathContext(path)
+        
+        let reasons = [
+            "This book offers \(levelText) insights perfect for your current \(pathContext) journey.",
+            "Based on your focus on \(pathContext), this author's approach will resonate with your goals.",
+            "The practical strategies in this book align perfectly with \(levelText) \(pathContext) development.",
+            "This book's unique perspective on \(pathContext) makes it ideal for your current growth stage."
+        ]
+        
+        return reasons.randomElement() ?? reasons[0]
+    }
+    
+    private static func generateDailyInsight(for book: BookRecommendation, path: TrainingPath) -> String {
+        let insights = [
+            "Today's wisdom from \(book.title): \(book.keyInsight)",
+            "Key insight: \(book.keyInsight) - Apply this to your \(path.displayName.lowercased()) practice today.",
+            "\(book.author) reminds us: \(book.keyInsight)",
+            "From \(book.title): \(book.keyInsight) - Perfect for your \(path.displayName.lowercased()) journey."
+        ]
+        
+        return insights.randomElement() ?? insights[0]
+    }
+    
+    private static func generateBookChallenge(for book: BookRecommendation, path: TrainingPath) -> String {
+        let baseAction = book.dailyAction
+        let pathSpecificChallenges = getChallengesForPath(path)
+        
+        return pathSpecificChallenges.randomElement() ?? baseAction
+    }
+    
+    private static func generateDeepDiveQuestion(insight: PathInsight, path: TrainingPath) -> String {
+        let questions = [
+            "How can you apply this insight to overcome your biggest \(path.displayName.lowercased()) challenge?",
+            "What would change in your life if you fully embraced this principle?",
+            "How does this insight challenge your current approach to \(path.displayName.lowercased())?",
+            "What's one specific action you can take today to embody this wisdom?"
+        ]
+        
+        return questions.randomElement() ?? questions[0]
+    }
+    
+    // MARK: - Scoring and Analysis
+    
+    private static func scoreBooks(
+        _ templates: [AdvancedBookTemplate],
+        for path: TrainingPath,
+        userLevel: UserLevel,
+        currentStreak: Int,
+        recentChallenges: [String]
+    ) -> [ScoredBook] {
+        return templates.map { template in
+            var score: Double = template.baseScore
+            
+            // Level appropriateness
+            if template.recommendedLevel == userLevel {
+                score += 0.3
+            } else if abs(template.recommendedLevel.rawValue - userLevel.rawValue) == 1 {
+                score += 0.1
+            }
+            
+            // Streak-based relevance
+            if currentStreak > 30 && template.tags.contains("advanced") {
+                score += 0.2
+            } else if currentStreak < 7 && template.tags.contains("beginner-friendly") {
+                score += 0.2
+            }
+            
+            // Recent challenge relevance
+            for challenge in recentChallenges {
+                if template.tags.contains(challenge.lowercased()) {
+                    score += 0.15
+                }
+            }
+            
+            // Seasonal relevance
+            let currentSeason = getSeason(for: Calendar.current.component(.month, from: Date()))
+            if template.seasonalRelevance.contains(currentSeason) {
+                score += 0.1
+            }
+            
+            return ScoredBook(template: template, score: score)
+        }.sorted { $0.score > $1.score }
+    }
+    
+    private static func analyzeReadingProfile(readBooks: [BookRecommendation], savedBooks: [BookRecommendation]) -> UserReadingProfile {
+        let totalBooks = readBooks.count
+        let averageRating = readBooks.compactMap { $0.userRating.numericValue }.reduce(0, +) / Double(max(1, readBooks.count))
+        
+        let level: UserLevel
+        if totalBooks < 3 {
+            level = .beginner
+        } else if totalBooks < 10 {
+            level = .intermediate
+        } else {
+            level = .advanced
         }
         
-        return filteredBooks.map { template in
-            BookRecommendation(
-                title: template.title,
-                author: template.author,
-                path: path,
-                summary: template.summary,
-                keyInsight: template.keyInsight,
-                dailyAction: template.dailyAction,
-                coverImageURL: template.coverImageURL,
-                amazonURL: template.amazonURL,
-                dateAdded: Date()
-            )
+        let preferredGenres = Dictionary(grouping: readBooks, by: { $0.genre })
+            .mapValues { $0.count }
+            .sorted { $0.value > $1.value }
+            .prefix(3)
+            .map { $0.key }
+        
+        return UserReadingProfile(
+            level: level,
+            averageRating: averageRating,
+            preferredGenres: Array(preferredGenres),
+            readingVelocity: calculateReadingVelocity(readBooks),
+            focusAreas: extractFocusAreas(from: readBooks + savedBooks)
+        )
+    }
+    
+    // MARK: - Helper Methods
+    
+    private static func matchesSearchQuery(_ template: AdvancedBookTemplate, query: String) -> Bool {
+        let lowercaseQuery = query.lowercased()
+        return template.title.lowercased().contains(lowercaseQuery) ||
+               template.author.lowercased().contains(lowercaseQuery) ||
+               template.summary.lowercased().contains(lowercaseQuery) ||
+               template.tags.contains { $0.lowercased().contains(lowercaseQuery) }
+    }
+    
+    private static func matchesFilters(_ template: AdvancedBookTemplate, filters: BookFilters) -> Bool {
+        if let genre = filters.genre, template.genre != genre { return false }
+        if let level = filters.userLevel, template.recommendedLevel != level { return false }
+        if let maxReadingTime = filters.maxEstimatedReadingTime, template.estimatedReadingTimeMinutes > maxReadingTime { return false }
+        return true
+    }
+    
+    private static func getPathContext(_ path: TrainingPath) -> String {
+        switch path {
+        case .discipline: return "building consistent habits and mental toughness"
+        case .clarity: return "developing focus and emotional regulation"
+        case .confidence: return "strengthening self-assurance and leadership"
+        case .purpose: return "finding meaning and direction"
+        case .authenticity: return "embracing genuine self-expression"
         }
     }
     
-    // MARK: - Book Template
-    private struct BookTemplate {
-        let title: String
-        let author: String
-        let summary: String
-        let keyInsight: String
-        let dailyAction: String
-        let coverImageURL: String?
-        let amazonURL: String?
+    private static func getSeason(for month: Int) -> Season {
+        switch month {
+        case 3...5: return .spring
+        case 6...8: return .summer
+        case 9...11: return .fall
+        default: return .winter
+        }
     }
     
-    // MARK: - Path-Specific Books
-    private static func getBooks(for path: TrainingPath) -> [BookTemplate] {
+    private static func getChallengesForPath(_ path: TrainingPath) -> [String] {
         switch path {
         case .discipline:
-            return getDisciplineBooks()
+            return [
+                "Do one hard thing before 10 AM",
+                "Practice the 2-minute rule on a new habit",
+                "Complete a task you've been avoiding for 15 minutes"
+            ]
         case .clarity:
-            return getClarityBooks()
+            return [
+                "Practice 5 minutes of focused breathing",
+                "Write down 3 thoughts you'd like to release",
+                "Spend 10 minutes in nature without distractions"
+            ]
         case .confidence:
-            return getConfidenceBooks()
+            return [
+                "Share your opinion in a conversation today",
+                "Make eye contact with 5 strangers",
+                "Compliment someone genuinely"
+            ]
         case .purpose:
-            return getPurposeBooks()
+            return [
+                "Write about what gives your life meaning",
+                "Connect with someone who inspires you",
+                "Spend 10 minutes visualizing your ideal future"
+            ]
         case .authenticity:
-            return getAuthenticityBooks()
+            return [
+                "Express a genuine feeling to someone you trust",
+                "Say no to something that doesn't align with your values",
+                "Share something you're passionate about"
+            ]
         }
     }
     
-    // MARK: - Discipline Books
-    private static func getDisciplineBooks() -> [BookTemplate] {
-        return [
-            BookTemplate(
-                title: "Atomic Habits",
-                author: "James Clear",
-                summary: "The definitive guide to building good habits and breaking bad ones. Clear explains how tiny changes compound into remarkable results through the four laws of behavior change.",
-                keyInsight: "You don't rise to the level of your goals, you fall to the level of your systems. Focus on systems, not outcomes.",
-                dailyAction: "Identify one habit you want to build and make it 1% easier to do today. Remove friction from good behaviors.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0735211299"
-            ),
-            BookTemplate(
-                title: "Can't Hurt Me",
-                author: "David Goggins",
-                summary: "A Navy SEAL's brutal journey from broken childhood to elite warrior. Goggins shares his philosophy of embracing discomfort and pushing past mental barriers.",
-                keyInsight: "The 40% Rule: When you think you're done, you're only 40% done. Your mind will quit long before your body needs to.",
-                dailyAction: "Do something hard today that you don't want to do. Practice being comfortable with discomfort.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1544512287"
-            ),
-            BookTemplate(
-                title: "Discipline Equals Freedom",
-                author: "Jocko Willink",
-                summary: "A former Navy SEAL commander's guide to discipline as the path to freedom. Simple, direct principles for building mental toughness and taking ownership.",
-                keyInsight: "Discipline equals freedom. The more disciplined you are, the more freedom you have in life.",
-                dailyAction: "Wake up earlier than planned tomorrow. Use the extra time for something that improves your life.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1250156947"
-            ),
-            BookTemplate(
-                title: "The Compound Effect",
-                author: "Darren Hardy",
-                summary: "How small, smart choices compound over time to create radical differences in your life. The power of consistency and incremental improvement.",
-                keyInsight: "Small, smart choices + consistency + time = radical difference. Success is not about massive action, but consistent action.",
-                dailyAction: "Choose one small positive action and commit to doing it for the next 7 days without fail.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0985529954"
-            ),
-            BookTemplate(
-                title: "The 5 AM Club",
-                author: "Robin Sharma",
-                summary: "A formula for early rising that helps you own your morning and elevate your life. The power of starting your day with intention and focus.",
-                keyInsight: "How you start your day determines how you live your day. Win the morning, win the day.",
-                dailyAction: "Set your alarm 15 minutes earlier tomorrow and use that time for personal development.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1443456624"
-            ),
-            BookTemplate(
-                title: "The Willpower Instinct",
-                author: "Kelly McGonigal",
-                summary: "Stanford psychologist's science-based approach to understanding and strengthening willpower. How to resist temptation and achieve your goals.",
-                keyInsight: "Willpower is like a muscle - it can be strengthened with practice but also gets fatigued with overuse.",
-                dailyAction: "Practice saying no to one small temptation today to strengthen your willpower muscle.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1583335080"
-            ),
-            BookTemplate(
-                title: "The Power of Now",
-                author: "Eckhart Tolle",
-                summary: "A guide to spiritual enlightenment through present-moment awareness. How to stop living in the past and future and find peace in the now.",
-                keyInsight: "The present moment is the only time over which we have dominion. Life is now.",
-                dailyAction: "When you catch your mind wandering to past or future today, gently bring attention back to the present moment.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1577314808"
-            )
-        ]
+    private static func estimateReadingTime(_ text: String) -> Int {
+        let wordCount = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+        return max(1, wordCount / 200) // 200 words per minute average
     }
     
-    // MARK: - Clarity Books
-    private static func getClarityBooks() -> [BookTemplate] {
-        return [
-            BookTemplate(
-                title: "Thinking, Fast and Slow",
-                author: "Daniel Kahneman",
-                summary: "Nobel laureate explores the two systems of thinking: fast, intuitive System 1 and slow, deliberate System 2. Understanding how your mind makes decisions.",
-                keyInsight: "We have two thinking systems: fast and emotional vs. slow and rational. Most decisions come from the fast system, which is prone to biases.",
-                dailyAction: "Before making any significant decision today, pause and engage your slow thinking system. Ask: 'What am I not considering?'",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0374533555"
-            ),
-            BookTemplate(
-                title: "The Untethered Soul",
-                author: "Michael Singer",
-                summary: "A journey beyond yourself to find inner peace and freedom. How to observe your thoughts without being controlled by them.",
-                keyInsight: "You are not your thoughts. You are the consciousness observing your thoughts. This awareness creates freedom.",
-                dailyAction: "When negative thoughts arise today, step back and observe them as clouds passing in the sky of your consciousness.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1572245379"
-            ),
-            BookTemplate(
-                title: "Mindset",
-                author: "Carol Dweck",
-                summary: "Stanford psychologist reveals how our beliefs about ability shape our success. The difference between fixed and growth mindsets.",
-                keyInsight: "People with a growth mindset believe abilities can be developed through effort. This leads to resilience and higher achievement.",
-                dailyAction: "When facing a challenge today, ask 'How can I learn from this?' instead of 'Can I do this?'",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0345472322"
-            ),
-            BookTemplate(
-                title: "Man's Search for Meaning",
-                author: "Viktor Frankl",
-                summary: "Holocaust survivor's profound insights on finding purpose in suffering. How meaning, not happiness, is the key to psychological resilience.",
-                keyInsight: "Everything can be taken from you except the freedom to choose your attitude in any given circumstances.",
-                dailyAction: "Identify one current challenge and find a way it's helping you grow or serve others.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/080701429X"
-            ),
-            BookTemplate(
-                title: "The Clarity Cleanse",
-                author: "Habib Sadeghi",
-                summary: "A 12-step process for releasing emotional toxicity and achieving mental clarity. How to identify and release limiting beliefs.",
-                keyInsight: "Emotional clarity comes from releasing attachment to outcomes and accepting what is while working toward what could be.",
-                dailyAction: "Write down one limiting belief you hold about yourself and question its validity with evidence.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1501154346"
-            ),
-            BookTemplate(
-                title: "Digital Minimalism",
-                author: "Cal Newport",
-                summary: "A philosophy for living more intentionally in an age of digital distraction. How to reclaim your attention and focus.",
-                keyInsight: "Clutter is costly. Digital clutter robs you of attention, which is your most valuable resource in the modern economy.",
-                dailyAction: "Remove one app from your phone that provides little value but consumes significant attention.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0525536515"
-            ),
-            BookTemplate(
-                title: "Wherever You Go, There You Are",
-                author: "Jon Kabat-Zinn",
-                summary: "An introduction to mindfulness meditation and present-moment awareness. How to find peace and clarity through mindful living.",
-                keyInsight: "Mindfulness is paying attention in a particular way: on purpose, in the present moment, non-judgmentally.",
-                dailyAction: "Spend 5 minutes today eating mindfully - no distractions, just awareness of taste, texture, and sensation.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1401307787"
-            )
-        ]
+    private static func calculateReadingVelocity(_ books: [BookRecommendation]) -> Double {
+        // Calculate books per month based on reading history
+        let readBooksWithDates = books.filter { $0.dateRead != nil }
+        guard !readBooksWithDates.isEmpty else { return 1.0 }
+        
+        let sortedDates = readBooksWithDates.compactMap { $0.dateRead }.sorted()
+        guard let firstDate = sortedDates.first, let lastDate = sortedDates.last else { return 1.0 }
+        
+        let monthsDifference = Calendar.current.dateComponents([.month], from: firstDate, to: lastDate).month ?? 1
+        return Double(readBooksWithDates.count) / Double(max(1, monthsDifference))
     }
     
-    // MARK: - Confidence Books
-    private static func getConfidenceBooks() -> [BookTemplate] {
-        return [
-            BookTemplate(
-                title: "The Confidence Code",
-                author: "Kay & Shipman",
-                summary: "Scientific research on confidence reveals it's more important than competence for success. How to build genuine confidence through action.",
-                keyInsight: "Confidence is not about thinking you're perfect. It's about being willing to try despite imperfection.",
-                dailyAction: "Do one thing today you're not 100% sure you can do well. Build confidence through action, not preparation.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/006223062X"
-            ),
-            BookTemplate(
-                title: "Presence",
-                author: "Amy Cuddy",
-                summary: "Harvard psychologist shows how body language shapes who you are. The science of power posing and embodying confidence.",
-                keyInsight: "Don't fake it till you make it. Fake it till you become it. Your body language changes your mind.",
-                dailyAction: "Before any challenging interaction today, spend 2 minutes in a power pose to embody confidence.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0316256579"
-            ),
-            BookTemplate(
-                title: "Daring Greatly",
-                author: "Brené Brown",
-                summary: "Research on vulnerability reveals it's the birthplace of courage, creativity, and change. How to show up and be seen.",
-                keyInsight: "Vulnerability is not weakness. It's emotional risk, exposure, uncertainty - and the birthplace of courage.",
-                dailyAction: "Share something slightly vulnerable with someone you trust today. Practice courage through authentic connection.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1592408419"
-            ),
-            BookTemplate(
-                title: "How to Win Friends and Influence People",
-                author: "Dale Carnegie",
-                summary: "Timeless principles for building relationships and social influence. The foundation of interpersonal confidence and leadership.",
-                keyInsight: "You can make more friends in two months by becoming interested in other people than in two years trying to get people interested in you.",
-                dailyAction: "In every conversation today, focus on being genuinely interested in the other person rather than trying to impress them.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0671027034"
-            ),
-            BookTemplate(
-                title: "The Charisma Myth",
-                author: "Olivia Fox Cabane",
-                summary: "Charisma is not an inborn trait but a learnable skill. Practical techniques for presence, power, and warmth.",
-                keyInsight: "Charisma is the result of specific behaviors: presence, power, and warmth. These can be developed through practice.",
-                dailyAction: "In one conversation today, practice full presence - put away distractions and give complete attention to the person.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1591845947"
-            ),
-            BookTemplate(
-                title: "The Like Switch",
-                author: "Jack Schafer",
-                summary: "Former FBI agent reveals techniques for getting people to like you in 90 seconds or less. The science of rapport and influence.",
-                keyInsight: "People like people who make them feel good about themselves. Focus on making others feel valued and appreciated.",
-                dailyAction: "Give one person a genuine, specific compliment today that makes them feel valued and seen.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1476754489"
-            ),
-            BookTemplate(
-                title: "The Art of Possibility",
-                author: "Rosamund & Benjamin Zander",
-                summary: "A transformational approach to life and leadership. How to see opportunities instead of obstacles and inspire others.",
-                keyInsight: "It's all invented. The stories we tell ourselves about reality are just that - stories. We can choose more empowering narratives.",
-                dailyAction: "Reframe one limiting story you tell about yourself into a possibility-focused narrative.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0142001104"
-            )
-        ]
+    private static func extractFocusAreas(from books: [BookRecommendation]) -> [String] {
+        // Extract common themes from book titles and summaries
+        let allText = books.map { "\($0.title) \($0.summary)" }.joined(separator: " ")
+        let words = allText.lowercased().components(separatedBy: .punctuationCharacters)
+            .joined(separator: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { $0.count > 3 }
+        
+        let wordCounts = Dictionary(grouping: words, by: { $0 })
+            .mapValues { $0.count }
+            .filter { $0.value > 1 }
+            .sorted { $0.value > $1.value }
+            .prefix(5)
+        
+        return Array(wordCounts.map { $0.key })
     }
     
-    // MARK: - Purpose Books
-    private static func getPurposeBooks() -> [BookTemplate] {
-        return [
-            BookTemplate(
-                title: "Start With Why",
-                author: "Simon Sinek",
-                summary: "How great leaders inspire action by starting with purpose. The golden circle of why, how, and what.",
-                keyInsight: "People don't buy what you do, they buy why you do it. Start with your purpose, not your product.",
-                dailyAction: "Write down why you do what you do. What's the deeper purpose behind your work and goals?",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1591846447"
-            ),
-            BookTemplate(
-                title: "The Purpose Driven Life",
-                author: "Rick Warren",
-                summary: "A spiritual journey to discover your reason for being alive. Five purposes that form the foundation of purposeful living.",
-                keyInsight: "You were made by God and for God. Until you understand that, life will never make sense.",
-                dailyAction: "Reflect on how you can serve something bigger than yourself today through your unique gifts and abilities.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0310205719"
-            ),
-            BookTemplate(
-                title: "Drive",
-                author: "Daniel Pink",
-                summary: "The science of motivation reveals autonomy, mastery, and purpose drive performance better than rewards and punishment.",
-                keyInsight: "True motivation comes from autonomy (control), mastery (getting better), and purpose (serving something larger).",
-                dailyAction: "Identify one skill you want to master and take one small step toward improvement today.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1594484805"
-            ),
-            BookTemplate(
-                title: "The Alchemist",
-                author: "Paulo Coelho",
-                summary: "A shepherd's journey teaches us about following our dreams and listening to our hearts. The universe conspires to help those who pursue their purpose.",
-                keyInsight: "When you want something, all the universe conspires in helping you to achieve it. Follow your personal legend.",
-                dailyAction: "Take one concrete step today toward a dream you've been putting off or neglecting.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0061122416"
-            ),
-            BookTemplate(
-                title: "Designing Your Life",
-                author: "Burnett & Evans",
-                summary: "Stanford design professors apply design thinking to life planning. How to build a well-lived, joyful life through prototyping and iteration.",
-                keyInsight: "Life design is not about finding your passion. It's about designing multiple possible lives and choosing the one that works best.",
-                dailyAction: "Write down three different versions of your 5-year plan. Explore multiple possibilities for your future.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1101875321"
-            ),
-            BookTemplate(
-                title: "The 7 Habits of Highly Effective People",
-                author: "Stephen Covey",
-                summary: "Timeless principles for personal and interpersonal effectiveness. Character-based approach to success and leadership.",
-                keyInsight: "Begin with the end in mind. All things are created twice - first mentally, then physically.",
-                dailyAction: "Write your personal mission statement. What do you want to be and do based on your values?",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1982137274"
-            ),
-            BookTemplate(
-                title: "Ikigai",
-                author: "García & Miralles",
-                summary: "Japanese concept of life's purpose - the intersection of what you love, what you're good at, what the world needs, and what you can be paid for.",
-                keyInsight: "Ikigai is found at the intersection of passion, mission, profession, and vocation. Purpose requires all four elements.",
-                dailyAction: "Draw four circles representing what you love, what you're good at, what the world needs, and what pays you. Find overlaps.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0143130722"
-            )
-        ]
+    // MARK: - Data Loading Methods
+    
+    private static func getAdvancedBookTemplates(for path: TrainingPath, userLevel: UserLevel = .beginner) -> [AdvancedBookTemplate] {
+        return getAllBookTemplates().filter { template in
+            template.primaryPath == path || template.secondaryPaths.contains(path)
+        }
     }
     
-    // MARK: - Authenticity Books
-    private static func getAuthenticityBooks() -> [BookTemplate] {
-        return [
-            BookTemplate(
-                title: "The Gifts of Imperfection",
-                author: "Brené Brown",
-                summary: "A guide to wholehearted living through self-compassion and vulnerability. How to let go of perfectionism and embrace your authentic self.",
-                keyInsight: "Authenticity is the daily practice of letting go of who we think we're supposed to be and embracing who we are.",
-                dailyAction: "Choose authenticity over approval in one situation today. Be real rather than what you think others want.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/159285849X"
-            ),
-            BookTemplate(
-                title: "The Four Agreements",
-                author: "Don Miguel Ruiz",
-                summary: "Ancient Toltec wisdom for personal freedom. Four simple agreements that can transform your life and relationships.",
-                keyInsight: "Don't take anything personally. What others say and do is a projection of their own reality, not yours.",
-                dailyAction: "Practice one of the four agreements today: be impeccable with your word, don't take things personally, don't make assumptions, or always do your best.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1878424319"
-            ),
-            BookTemplate(
-                title: "Radical Acceptance",
-                author: "Tara Brach",
-                summary: "Buddhist teacher's guide to embracing your life with the heart of a Buddha. How to stop fighting yourself and find peace through acceptance.",
-                keyInsight: "Radical acceptance is the willingness to experience ourselves and our lives as it is. This creates the foundation for authentic change.",
-                dailyAction: "Identify one aspect of yourself you've been fighting or trying to change. Practice accepting it as it is today.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0553380990"
-            ),
-            BookTemplate(
-                title: "The Authentic Self",
-                author: "James Masterson",
-                summary: "Psychotherapist's guide to recovering your true self from the false self created by early adaptations to family dynamics.",
-                keyInsight: "The authentic self emerges when we stop performing for approval and start expressing our genuine thoughts and feelings.",
-                dailyAction: "Notice when you're performing or adapting for others' approval today. Practice expressing your genuine thoughts instead.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1138127124"
-            ),
-            BookTemplate(
-                title: "Being Yourself",
-                author: "Teal Swan",
-                summary: "A guide to authenticity in a world that pressures conformity. How to find and express your true self despite social conditioning.",
-                keyInsight: "You cannot be authentic while simultaneously seeking approval. Authenticity requires choosing truth over comfort.",
-                dailyAction: "Express one genuine opinion today that you normally keep to yourself out of fear of judgment.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1401952321"
-            ),
-            BookTemplate(
-                title: "The Mask of Masculinity",
-                author: "Lewis Howes",
-                summary: "Former pro athlete's journey to authentic manhood. How to drop the masks that hide your true self and embrace vulnerability.",
-                keyInsight: "The masks we wear to appear strong actually make us weak. True strength comes from vulnerability and authenticity.",
-                dailyAction: "Identify one 'mask' you wear (stoic, people-pleaser, aggressive, etc.) and practice dropping it in one interaction today.",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/1623367395"
-            ),
-            BookTemplate(
-                title: "A New Earth",
-                author: "Eckhart Tolle",
-                summary: "Awakening to your life's purpose through ego transcendence. How to move beyond identification with thoughts and roles to find your authentic being.",
-                keyInsight: "You are not your thoughts, emotions, or the roles you play. Your authentic self is the awareness behind all mental noise.",
-                dailyAction: "When you catch yourself in a reactive pattern today, pause and ask: 'Who is aware of this reaction?'",
-                coverImageURL: nil,
-                amazonURL: "https://amazon.com/dp/0452289963"
-            )
-        ]
+    private static func getAllBookTemplates() -> [AdvancedBookTemplate] {
+        return defaultBookTemplates + communityBookTemplates + aiGeneratedTemplates
+    }
+    
+    private static func getPathSpecificInsights(for path: TrainingPath) -> [PathInsight] {
+        switch path {
+        case .discipline:
+            return disciplineInsights
+        case .clarity:
+            return clarityInsights
+        case .confidence:
+            return confidenceInsights
+        case .purpose:
+            return purposeInsights
+        case .authenticity:
+            return authenticityInsights
+        }
     }
 }
+
+// MARK: - Supporting Models
+
+struct ScoredBook {
+    let template: AdvancedBookTemplate
+    let score: Double
+}
+
+struct AdvancedBookTemplate {
+    let title: String
+    let author: String
+    let summary: String
+    let keyInsight: String
+    let dailyAction: String
+    let coverImageURL: String?
+    let amazonURL: String?
+    let primaryPath: TrainingPath
+    let secondaryPaths: [TrainingPath]
+    let recommendedLevel: UserLevel
+    let genre: BookRecommendation.BookGenre
+    let tags: [String]
+    let baseScore: Double
+    let trendingScore: Double
+    let seasonalRelevance: [Season]
+    let estimatedReadingTimeMinutes: Int
+    let difficultyRating: Int // 1-5
+    let practicalityScore: Double // 0-1
+    let inspirationScore: Double // 0-1
+    
+    func toBookRecommendation(for path: TrainingPath) -> BookRecommendation {
+        return BookRecommendation(
+            title: title,
+            author: author,
+            path: path,
+            summary: summary,
+            keyInsight: keyInsight,
+            dailyAction: dailyAction,
+            coverImageURL: coverImageURL,
+            amazonURL: amazonURL,
+            dateAdded: Date()
+        )
+    }
+}
+
+struct UserReadingProfile {
+    let level: UserLevel
+    let averageRating: Double
+    let preferredGenres: [BookRecommendation.BookGenre]
+    let readingVelocity: Double // books per month
+    let focusAreas: [String]
+}
+
+struct BookFilters {
+    let genre: BookRecommendation.BookGenre?
+    let userLevel: UserLevel?
+    let maxEstimatedReadingTime: Int? // minutes
+    let minRating: Double?
+    
+    init(genre: BookRecommendation.BookGenre? = nil, 
+         userLevel: UserLevel? = nil, 
+         maxEstimatedReadingTime: Int? = nil, 
+         minRating: Double? = nil) {
+        self.genre = genre
+        self.userLevel = userLevel
+        self.maxEstimatedReadingTime = maxEstimatedReadingTime
+        self.minRating = minRating
+    }
+}
+
+struct PathInsight {
+    let content: String
+    let actionItem: String
+    let category: String
+    let depth: InsightDepth
+    
+    enum InsightDepth {
+        case surface, practical, philosophical
+    }
+}
+
+enum UserLevel: Int, CaseIterable {
+    case beginner = 1
+    case intermediate = 2
+    case advanced = 3
+    
+    var displayName: String {
+        switch self {
+        case .beginner: return "Beginner"
+        case .intermediate: return "Intermediate"
+        case .advanced: return "Advanced"
+        }
+    }
+}
+
+enum Season {
+    case spring, summer, fall, winter
+}
+
+// MARK: - Seeded Random Number Generator
+struct SeededRandomNumberGenerator: RandomNumberGenerator {
+    private var seed: UInt64
+    
+    init(seed: Int) {
+        self.seed = UInt64(seed)
+    }
+    
+    mutating func next() -> UInt64 {
+        seed = seed &* 1103515245 &+ 12345
+        return seed
+    }
+}
+
+// MARK: - Extensions for Enhanced BookRecommendation
+
+extension BookRecommendation {
+    var aiRecommendationReason: String {
+        get { return personalNotes ?? "" }
+        set { personalNotes = newValue }
+    }
+    
+    var dailyInsight: String? {
+        get { return nil } // This would be computed or stored separately
+        set { } // Implementation would depend on your data model
+    }
+    
+    var todaysChallenge: String? {
+        get { return nil } // This would be computed or stored separately  
+        set { } // Implementation would depend on your data model
+    }
+    
+    var searchRelevanceScore: Double {
+        get { return Double(priorityLevel) / 5.0 }
+        set { priorityLevel = min(5, max(1, Int(newValue * 5))) }
+    }
+}
+
+extension BookRecommendation.BookRating {
+    var numericValue: Double? {
+        switch self {
+        case .unrated: return nil
+        case .poor: return 1.0
+        case .fair: return 2.0
+        case .good: return 3.0
+        case .great: return 4.0
+        case .excellent: return 5.0
+        }
+    }
+}
+
+// MARK: - Book Data Collections (These would be moved to separate files in a real implementation)
+
+private let defaultBookTemplates: [AdvancedBookTemplate] = [
+    // Discipline Books
+    AdvancedBookTemplate(
+        title: "Atomic Habits",
+        author: "James Clear",
+        summary: "A practical guide to building good habits and breaking bad ones through tiny changes that deliver remarkable results.",
+        keyInsight: "You do not rise to the level of your goals. You fall to the level of your systems.",
+        dailyAction: "Stack a new 2-minute habit onto an existing routine",
+        coverImageURL: "https://example.com/atomic-habits-cover.jpg",
+        amazonURL: "https://amazon.com/atomic-habits",
+        primaryPath: .discipline,
+        secondaryPaths: [.clarity, .purpose],
+        recommendedLevel: .beginner,
+        genre: .selfHelp,
+        tags: ["habits", "systems", "practical", "beginner-friendly"],
+        baseScore: 0.9,
+        trendingScore: 0.95,
+        seasonalRelevance: [.winter, .spring],
+        estimatedReadingTimeMinutes: 480,
+        difficultyRating: 2,
+        practicalityScore: 0.95,
+        inspirationScore: 0.8
+    ),
+    
+    AdvancedBookTemplate(
+        title: "Can't Hurt Me",
+        author: "David Goggins",
+        summary: "A memoir and self-help guide about mastering your mind and defying the odds through extreme mental toughness.",
+        keyInsight: "The only way you gain mental toughness is to do things you're not happy doing.",
+        dailyAction: "Do one hard thing before 10 AM that makes you uncomfortable",
+        coverImageURL: "https://example.com/cant-hurt-me-cover.jpg",
+        amazonURL: "https://amazon.com/cant-hurt-me",
+        primaryPath: .discipline,
+        secondaryPaths: [.confidence],
+        recommendedLevel: .intermediate,
+        genre: .biography,
+        tags: ["mental toughness", "extreme", "military", "advanced"],
+        baseScore: 0.85,
+        trendingScore: 0.8,
+        seasonalRelevance: [.fall, .winter],
+        estimatedReadingTimeMinutes: 600,
+        difficultyRating: 4,
+        practicalityScore: 0.7,
+        inspirationScore: 0.95
+    ),
+    
+    // Add more book templates for other paths...
+]
+
+private let communityBookTemplates: [AdvancedBookTemplate] = []
+private let aiGeneratedTemplates: [AdvancedBookTemplate] = []
+
+// Insights collections
+private let disciplineInsights: [PathInsight] = [
+    PathInsight(
+        content: "Discipline isn't about perfection—it's about showing up consistently, even when motivation fails.",
+        actionItem: "Commit to one small action every day for the next 7 days, regardless of how you feel.",
+        category: "Consistency",
+        depth: .practical
+    ),
+    PathInsight(
+        content: "The compound effect of small daily habits creates extraordinary results over time.",
+        actionItem: "Identify one 2-minute habit you can add to your morning routine starting tomorrow.",
+        category: "Habits",
+        depth: .practical
+    )
+]
+
+private let clarityInsights: [PathInsight] = [
+    PathInsight(
+        content: "Clarity comes not from thinking more, but from thinking better—with focus and intention.",
+        actionItem: "Spend 5 minutes writing down your thoughts without judgment, then identify the most important one.",
+        category: "Mental Clarity",
+        depth: .practical
+    )
+]
+
+private let confidenceInsights: [PathInsight] = [
+    PathInsight(
+        content: "Confidence isn't about being perfect—it's about being willing to be imperfect in front of others.",
+        actionItem: "Share one authentic thought or opinion in a conversation today, even if you're not 100% sure.",
+        category: "Authentic Confidence",
+        depth: .practical
+    )
+]
+
+private let purposeInsights: [PathInsight] = [
+    PathInsight(
+        content: "Purpose isn't found—it's created through the intersection of your values, strengths, and the world's needs.",
+        actionItem: "Write down one way you can use your unique strengths to help someone else today.",
+        category: "Life Purpose",
+        depth: .philosophical
+    )
+]
+
+private let authenticityInsights: [PathInsight] = [
+    PathInsight(
+        content: "Authenticity requires the courage to disappoint others in service of your true self.",
+        actionItem: "Say no to one request today that doesn't align with your values or priorities.",
+        category: "Authentic Living",
+        depth: .practical
+    )
+]
