@@ -1,101 +1,639 @@
 import SwiftUI
 import Foundation
+import Combine
+
+// MARK: - AIResponse (AI response model)
+struct AIResponse: Identifiable, Codable {
+    var id: UUID = UUID()
+    let content: String
+    let type: ResponseType
+    let confidence: Double // 0.0 to 1.0
+    let generatedAt: Date
+    let tokenCount: Int
+    let model: String
+    let context: ResponseContext?
+    let suggestions: [String]
+    let followUpQuestions: [String]
+    
+    init(content: String, type: ResponseType, confidence: Double = 0.8, model: String = "gpt-3.5-turbo", context: ResponseContext? = nil, suggestions: [String] = [], followUpQuestions: [String] = []) {
+        self.content = content
+        self.type = type
+        self.confidence = confidence
+        self.generatedAt = Date()
+        self.tokenCount = content.components(separatedBy: .whitespacesAndNewlines).count
+        self.model = model
+        self.context = context
+        self.suggestions = suggestions
+        self.followUpQuestions = followUpQuestions
+    }
+    
+    enum ResponseType: String, Codable {
+        case checkIn = "check_in"
+        case insight = "insight"
+        case summary = "summary"
+        case challenge = "challenge"
+        case motivation = "motivation"
+        case guidance = "guidance"
+        
+        var displayName: String {
+            switch self {
+            case .checkIn: return "Check-in Response"
+            case .insight: return "Personal Insight"
+            case .summary: return "Weekly Summary"
+            case .challenge: return "Challenge Feedback"
+            case .motivation: return "Motivation Boost"
+            case .guidance: return "Guidance"
+            }
+        }
+        
+        var icon: String {
+            switch self {
+            case .checkIn: return "message.fill"
+            case .insight: return "lightbulb.fill"
+            case .summary: return "doc.text.fill"
+            case .challenge: return "target"
+            case .motivation: return "flame.fill"
+            case .guidance: return "compass.drawing"
+            }
+        }
+    }
+    
+    struct ResponseContext: Codable {
+        let trainingPath: TrainingPath
+        let timeOfDay: String?
+        let userMood: String?
+        let recentActivity: [String]
+        let streakInfo: String?
+    }
+}
+
+// MARK: - PersonalizedPrompt (Custom prompts)
+struct PersonalizedPrompt: Identifiable, Codable {
+    var id: UUID = UUID()
+    let basePrompt: String
+    let personalizations: [Personalization]
+    let trainingPath: TrainingPath
+    let difficulty: PromptDifficulty
+    let category: PromptCategory
+    let createdAt: Date
+    let lastUsed: Date?
+    let usageCount: Int
+    let effectiveness: Double? // User feedback 0.0 to 1.0
+    
+    init(basePrompt: String, personalizations: [Personalization] = [], trainingPath: TrainingPath, difficulty: PromptDifficulty = .medium, category: PromptCategory) {
+        self.basePrompt = basePrompt
+        self.personalizations = personalizations
+        self.trainingPath = trainingPath
+        self.difficulty = difficulty
+        self.category = category
+        self.createdAt = Date()
+        self.lastUsed = nil
+        self.usageCount = 0
+        self.effectiveness = nil
+    }
+    
+    struct Personalization: Codable {
+        let placeholder: String
+        let replacement: String
+        let type: PersonalizationType
+        
+        enum PersonalizationType: String, Codable {
+            case name = "name"
+            case streak = "streak"
+            case recentProgress = "recent_progress"
+            case mood = "mood"
+            case timeOfDay = "time_of_day"
+            case challenge = "challenge"
+            case goal = "goal"
+        }
+    }
+    
+    enum PromptDifficulty: String, Codable {
+        case easy = "easy"
+        case medium = "medium"
+        case hard = "hard"
+        case expert = "expert"
+        
+        var displayName: String {
+            return rawValue.capitalized
+        }
+    }
+    
+    enum PromptCategory: String, Codable {
+        case reflection = "reflection"
+        case motivation = "motivation"
+        case planning = "planning"
+        case assessment = "assessment"
+        case creativity = "creativity"
+        case problemSolving = "problem_solving"
+        
+        var displayName: String {
+            switch self {
+            case .reflection: return "Reflection"
+            case .motivation: return "Motivation"
+            case .planning: return "Planning"
+            case .assessment: return "Assessment"
+            case .creativity: return "Creativity"
+            case .problemSolving: return "Problem Solving"
+            }
+        }
+        
+        var icon: String {
+            switch self {
+            case .reflection: return "thought.bubble"
+            case .motivation: return "flame.fill"
+            case .planning: return "calendar.badge.plus"
+            case .assessment: return "checkmark.circle"
+            case .creativity: return "paintbrush.fill"
+            case .problemSolving: return "puzzle.piece.fill"
+            }
+        }
+    }
+    
+    var personalizedContent: String {
+        var content = basePrompt
+        for personalization in personalizations {
+            content = content.replacingOccurrences(of: "{\(personalization.placeholder)}", with: personalization.replacement)
+        }
+        return content
+    }
+}
+
+// MARK: - WeeklySummary (Generated insights)
+struct WeeklySummary: Identifiable, Codable {
+    var id: UUID = UUID()
+    let weekStartDate: Date
+    let weekEndDate: Date
+    let summary: String
+    let keyThemes: [String]
+    let challengesCompleted: Int
+    let checkinStreak: Int
+    let recommendedFocus: TrainingPath?
+    let moodTrend: MoodTrend
+    let insights: [WeeklyInsight]
+    let achievements: [Achievement]
+    let nextWeekGoals: [String]
+    let aiConfidenceScore: Double // 0.0 to 1.0
+    let generationMetadata: GenerationMetadata
+    
+    init(weekStartDate: Date, weekEndDate: Date, summary: String, keyThemes: [String], challengesCompleted: Int, checkinStreak: Int, recommendedFocus: TrainingPath? = nil) {
+        self.weekStartDate = weekStartDate
+        self.weekEndDate = weekEndDate
+        self.summary = summary
+        self.keyThemes = keyThemes
+        self.challengesCompleted = challengesCompleted
+        self.checkinStreak = checkinStreak
+        self.recommendedFocus = recommendedFocus
+        self.moodTrend = .stable
+        self.insights = []
+        self.achievements = []
+        self.nextWeekGoals = []
+        self.aiConfidenceScore = 0.7
+        self.generationMetadata = GenerationMetadata()
+    }
+    
+    struct GenerationMetadata: Codable {
+        let generatedAt: Date
+        let dataPointsAnalyzed: Int
+        let model: String
+        let processingTime: TimeInterval
+        
+        init(dataPointsAnalyzed: Int = 0, model: String = "gpt-3.5-turbo", processingTime: TimeInterval = 0) {
+            self.generatedAt = Date()
+            self.dataPointsAnalyzed = dataPointsAnalyzed
+            self.model = model
+            self.processingTime = processingTime
+        }
+    }
+    
+    var formattedDateRange: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return "\(formatter.string(from: weekStartDate)) - \(formatter.string(from: weekEndDate))"
+    }
+    
+    enum MoodTrend: String, Codable {
+        case improving = "improving"
+        case stable = "stable"
+        case declining = "declining"
+        
+        var displayName: String {
+            switch self {
+            case .improving: return "Improving"
+            case .stable: return "Stable"
+            case .declining: return "Needs Attention"
+            }
+        }
+        
+        var color: Color {
+            switch self {
+            case .improving: return .green
+            case .stable: return .blue
+            case .declining: return .orange
+            }
+        }
+        
+        var icon: String {
+            switch self {
+            case .improving: return "arrow.up.circle"
+            case .stable: return "minus.circle"
+            case .declining: return "arrow.down.circle"
+            }
+        }
+    }
+}
+
+// MARK: - MoodAnalysis (Mood trend data)
+struct MoodAnalysis: Identifiable, Codable {
+    var id: UUID = UUID()
+    let period: AnalysisPeriod
+    let averageMood: Double // 1.0 to 5.0
+    let moodTrend: TrendDirection
+    let moodVariability: Double // Standard deviation
+    let peakMoodDays: [Date]
+    let lowMoodDays: [Date]
+    let moodFactors: [MoodFactor]
+    let recommendations: [String]
+    let confidenceScore: Double
+    let dataPoints: [MoodDataPoint]
+    
+    init(period: AnalysisPeriod, dataPoints: [MoodDataPoint]) {
+        self.period = period
+        self.dataPoints = dataPoints
+        
+        // Calculate statistics
+        let moodValues = dataPoints.map { $0.averageMood }
+        self.averageMood = moodValues.isEmpty ? 0 : moodValues.reduce(0, +) / Double(moodValues.count)
+        
+        // Determine trend
+        if moodValues.count >= 2 {
+            let firstHalf = Array(moodValues.prefix(moodValues.count / 2))
+            let secondHalf = Array(moodValues.suffix(moodValues.count / 2))
+            let firstAvg = firstHalf.reduce(0, +) / Double(firstHalf.count)
+            let secondAvg = secondHalf.reduce(0, +) / Double(secondHalf.count)
+            
+            if secondAvg > firstAvg + 0.2 {
+                self.moodTrend = .improving
+            } else if secondAvg < firstAvg - 0.2 {
+                self.moodTrend = .declining
+            } else {
+                self.moodTrend = .stable
+            }
+        } else {
+            self.moodTrend = .stable
+        }
+        
+        // Calculate variability (simplified standard deviation)
+        let variance = moodValues.map { pow($0 - averageMood, 2) }.reduce(0, +) / Double(moodValues.count)
+        self.moodVariability = sqrt(variance)
+        
+        // Identify peak and low days
+        self.peakMoodDays = dataPoints.filter { $0.averageMood >= 4.0 }.map { $0.date }
+        self.lowMoodDays = dataPoints.filter { $0.averageMood <= 2.0 }.map { $0.date }
+        
+        // Placeholder for mood factors (would be analyzed from context)
+        self.moodFactors = []
+        self.recommendations = []
+        self.confidenceScore = min(Double(dataPoints.count) / 7.0, 1.0) // More data = higher confidence
+    }
+    
+    enum AnalysisPeriod: String, Codable {
+        case week = "week"
+        case month = "month"
+        case quarter = "quarter"
+        case year = "year"
+        
+        var displayName: String {
+            switch self {
+            case .week: return "This Week"
+            case .month: return "This Month"
+            case .quarter: return "This Quarter"
+            case .year: return "This Year"
+            }
+        }
+    }
+    
+    enum TrendDirection: String, Codable {
+        case improving = "improving"
+        case stable = "stable"
+        case declining = "declining"
+        
+        var color: Color {
+            switch self {
+            case .improving: return .green
+            case .stable: return .blue
+            case .declining: return .orange
+            }
+        }
+        
+        var icon: String {
+            switch self {
+            case .improving: return "arrow.up.right"
+            case .stable: return "arrow.right"
+            case .declining: return "arrow.down.right"
+            }
+        }
+    }
+    
+    struct MoodFactor: Identifiable, Codable {
+        var id: UUID = UUID()
+        let factor: String
+        let impact: Double // -1.0 to 1.0
+        let confidence: Double // 0.0 to 1.0
+        let occurrences: Int
+        
+        var impactDescription: String {
+            if impact > 0.3 {
+                return "Strongly positive"
+            } else if impact > 0.1 {
+                return "Positive"
+            } else if impact < -0.3 {
+                return "Strongly negative"
+            } else if impact < -0.1 {
+                return "Negative"
+            } else {
+                return "Neutral"
+            }
+        }
+    }
+}
+
+// MARK: - CustomChallenge (Personalized challenges)
+struct CustomChallenge: Identifiable, Codable {
+    var id: UUID = UUID()
+    let baseChallenge: DailyChallenge
+    let personalizations: [ChallengePersonalization]
+    let aiReasoning: String
+    let difficulty: ChallengeDifficulty
+    let estimatedTime: Int // minutes
+    let prerequisites: [String]
+    let adaptations: [String]
+    let successMetrics: [String]
+    let fallbackOptions: [String]
+    let createdAt: Date
+    
+    init(baseChallenge: DailyChallenge, personalizations: [ChallengePersonalization] = [], aiReasoning: String = "", difficulty: ChallengeDifficulty = .medium) {
+        self.baseChallenge = baseChallenge
+        self.personalizations = personalizations
+        self.aiReasoning = aiReasoning
+        self.difficulty = difficulty
+        self.estimatedTime = baseChallenge.estimatedTimeMinutes
+        self.prerequisites = []
+        self.adaptations = []
+        self.successMetrics = []
+        self.fallbackOptions = []
+        self.createdAt = Date()
+    }
+    
+    struct ChallengePersonalization: Codable {
+        let aspect: PersonalizationAspect
+        let originalValue: String
+        let personalizedValue: String
+        let reason: String
+        
+        enum PersonalizationAspect: String, Codable {
+            case title = "title"
+            case description = "description"
+            case timeFrame = "time_frame"
+            case difficulty = "difficulty"
+            case context = "context"
+            case method = "method"
+        }
+    }
+    
+    var personalizedChallenge: DailyChallenge {
+        var challenge = baseChallenge
+        
+        for personalization in personalizations {
+            switch personalization.aspect {
+            case .title:
+                challenge = DailyChallenge(
+                    title: personalization.personalizedValue,
+                    description: challenge.description,
+                    path: challenge.path,
+                    difficulty: challenge.difficulty,
+                    date: challenge.date,
+                    estimatedTimeMinutes: challenge.estimatedTimeMinutes,
+                    category: challenge.category,
+                    tags: challenge.tags
+                )
+            case .description:
+                challenge = DailyChallenge(
+                    title: challenge.title,
+                    description: personalization.personalizedValue,
+                    path: challenge.path,
+                    difficulty: challenge.difficulty,
+                    date: challenge.date,
+                    estimatedTimeMinutes: challenge.estimatedTimeMinutes,
+                    category: challenge.category,
+                    tags: challenge.tags
+                )
+            default:
+                break
+            }
+        }
+        
+        return challenge
+    }
+}
+
+// MARK: - AIError (Error handling enum)
+enum AIError: Error, LocalizedError {
+    case invalidAPIKey
+    case rateLimitExceeded
+    case networkError(Error)
+    case invalidResponse
+    case contentFiltered
+    case contextTooLong
+    case modelOverloaded
+    case insufficientData
+    case authenticationFailed
+    case quotaExceeded
+    case unknown(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidAPIKey:
+            return "Invalid API key. Please check your configuration."
+        case .rateLimitExceeded:
+            return "You've reached your AI usage limit. Please try again later."
+        case .networkError(let error):
+            return "Network error: \(error.localizedDescription)"
+        case .invalidResponse:
+            return "Received an invalid response from the AI service."
+        case .contentFiltered:
+            return "Your request was filtered for safety reasons."
+        case .contextTooLong:
+            return "Your input is too long. Please try with shorter text."
+        case .modelOverloaded:
+            return "AI service is currently overloaded. Please try again in a moment."
+        case .insufficientData:
+            return "Not enough data to generate a meaningful response."
+        case .authenticationFailed:
+            return "Authentication failed. Please check your account status."
+        case .quotaExceeded:
+            return "Your AI quota has been exceeded. Please upgrade your plan."
+        case .unknown(let message):
+            return "An unexpected error occurred: \(message)"
+        }
+    }
+    
+    var recoveryAction: String? {
+        switch self {
+        case .invalidAPIKey:
+            return "Contact support for assistance"
+        case .rateLimitExceeded:
+            return "Wait a moment and try again"
+        case .networkError:
+            return "Check your internet connection"
+        case .invalidResponse:
+            return "Try again with different input"
+        case .contentFiltered:
+            return "Rephrase your request"
+        case .contextTooLong:
+            return "Shorten your input"
+        case .modelOverloaded:
+            return "Try again in a few minutes"
+        case .insufficientData:
+            return "Use the app more to generate better insights"
+        case .authenticationFailed:
+            return "Sign out and sign back in"
+        case .quotaExceeded:
+            return "Upgrade to Pro for unlimited AI features"
+        case .unknown:
+            return "Try again later"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .invalidAPIKey, .authenticationFailed:
+            return "key.slash"
+        case .rateLimitExceeded, .quotaExceeded:
+            return "clock.badge.exclamationmark"
+        case .networkError:
+            return "wifi.slash"
+        case .invalidResponse, .unknown:
+            return "exclamationmark.triangle"
+        case .contentFiltered:
+            return "shield.slash"
+        case .contextTooLong:
+            return "text.badge.minus"
+        case .modelOverloaded:
+            return "server.rack"
+        case .insufficientData:
+            return "chart.bar.doc.horizontal"
+        }
+    }
+}
 
 // MARK: - AI Manager
 class AIManager: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var lastError: AIError?
+    @Published var usageStats: UsageStats = UsageStats()
     
     private let apiKey: String
     private let baseURL = "https://api.openai.com/v1"
+    private let session = URLSession.shared
     
     init() {
         // In production, load from secure storage or environment variables
-        self.apiKey = "your-openai-api-key-here"
+        self.apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? "your-api-key-here"
     }
     
-    // MARK: - Check-in AI Integration
-    func generateCheckInResponse(
-        userInput: String,
-        timeOfDay: AICheckIn.CheckInTime,
-        trainingPath: TrainingPath,
-        mood: AICheckIn.MoodRating?
-    ) async -> String {
+    struct UsageStats: Codable {
+        var requestsToday: Int = 0
+        var tokensUsedToday: Int = 0
+        var lastResetDate: Date = Date()
+        var totalRequests: Int = 0
+        var totalTokens: Int = 0
         
+        mutating func recordUsage(tokens: Int) {
+            let calendar = Calendar.current
+            if !calendar.isDate(lastResetDate, inSameDayAs: Date()) {
+                requestsToday = 0
+                tokensUsedToday = 0
+                lastResetDate = Date()
+            }
+            
+            requestsToday += 1
+            tokensUsedToday += tokens
+            totalRequests += 1
+            totalTokens += tokens
+        }
+    }
+    
+    // MARK: - AI Response Generation
+    func generateAIResponse(
+        prompt: PersonalizedPrompt,
+        context: AIResponse.ResponseContext
+    ) async -> Result<AIResponse, AIError> {
         await MainActor.run {
             isLoading = true
             errorMessage = nil
+            lastError = nil
         }
         
-        let systemPrompt = createCheckInSystemPrompt(
-            timeOfDay: timeOfDay,
-            trainingPath: trainingPath
-        )
-        
-        let userPrompt = createCheckInUserPrompt(
-            userInput: userInput,
-            mood: mood
-        )
+        defer {
+            Task { @MainActor in
+                isLoading = false
+            }
+        }
         
         do {
             let response = try await callOpenAI(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                maxTokens: 150
+                systemPrompt: createSystemPrompt(for: prompt, context: context),
+                userPrompt: prompt.personalizedContent,
+                maxTokens: 200
+            )
+            
+            let aiResponse = AIResponse(
+                content: response,
+                type: determineResponseType(from: prompt.category),
+                context: context
             )
             
             await MainActor.run {
-                isLoading = false
+                usageStats.recordUsage(tokens: aiResponse.tokenCount)
             }
             
-            return response
+            return .success(aiResponse)
+            
+        } catch let error as AIError {
+            await MainActor.run {
+                lastError = error
+                errorMessage = error.localizedDescription
+            }
+            return .failure(error)
         } catch {
+            let aiError = AIError.unknown(error.localizedDescription)
             await MainActor.run {
-                isLoading = false
-                errorMessage = "Failed to get AI response. Please try again."
+                lastError = aiError
+                errorMessage = aiError.localizedDescription
             }
-            
-            // Fallback to template response
-            return getTemplateCheckInResponse(
-                timeOfDay: timeOfDay,
-                trainingPath: trainingPath,
-                mood: mood
-            )
+            return .failure(aiError)
         }
     }
     
-    // MARK: - Weekly Summary Generation
     func generateWeeklySummary(
         journalEntries: [JournalEntry],
         completedChallenges: [DailyChallenge],
         checkIns: [AICheckIn],
         trainingPath: TrainingPath
-    ) async -> WeeklySummary {
+    ) async -> Result<WeeklySummary, AIError> {
         
-        await MainActor.run {
-            isLoading = true
-        }
-        
-        let systemPrompt = """
-        You are an AI mentor specializing in personal development. Analyze the user's weekly activity and provide insightful, supportive feedback focused on their \(trainingPath.displayName.lowercased()) journey.
-        
-        Create a weekly summary that:
-        1. Highlights key patterns and growth
-        2. Identifies themes from their reflections
-        3. Acknowledges their progress and challenges
-        4. Provides encouraging, actionable insights
-        5. Recommends focus areas for the upcoming week
-        
-        Keep the tone supportive, wise, and motivational. Be specific about their progress.
-        """
-        
-        let weekData = createWeeklyDataPrompt(
-            journalEntries: journalEntries,
-            completedChallenges: completedChallenges,
-            checkIns: checkIns
-        )
+        let startTime = Date()
         
         do {
+            let systemPrompt = createWeeklySummarySystemPrompt(trainingPath: trainingPath)
+            let weekData = createWeeklyDataPrompt(
+                journalEntries: journalEntries,
+                completedChallenges: completedChallenges,
+                checkIns: checkIns
+            )
+            
             let summaryText = try await callOpenAI(
                 systemPrompt: systemPrompt,
                 userPrompt: weekData,
@@ -103,134 +641,71 @@ class AIManager: ObservableObject {
             )
             
             let keyThemes = try await extractKeyThemes(from: journalEntries)
+            let processingTime = Date().timeIntervalSince(startTime)
             
-            await MainActor.run {
-                isLoading = false
-            }
-            
-            return WeeklySummary(
+            let summary = WeeklySummary(
                 weekStartDate: Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date(),
                 weekEndDate: Date(),
                 summary: summaryText,
                 keyThemes: keyThemes,
                 challengesCompleted: completedChallenges.count,
-                checkinStreak: calculateCheckInStreak(checkIns),
-                recommendedFocus: determineRecommendedFocus(from: journalEntries)
+                checkinStreak: calculateCheckInStreak(checkIns)
             )
             
+            return .success(summary)
+            
+        } catch let error as AIError {
+            return .failure(error)
         } catch {
-            await MainActor.run {
-                isLoading = false
-                errorMessage = "Failed to generate weekly summary."
-            }
-            
-            // Fallback to template summary
-            return createTemplateWeeklySummary(
-                journalEntries: journalEntries,
-                completedChallenges: completedChallenges,
-                checkIns: checkIns,
-                trainingPath: trainingPath
-            )
+            return .failure(.unknown(error.localizedDescription))
         }
     }
     
-    // MARK: - Challenge Customization
-    func customizeChallenge(
+    func generateCustomChallenge(
         baseChallenge: DailyChallenge,
         userContext: String,
         recentProgress: String
-    ) async -> DailyChallenge {
-        
-        let systemPrompt = """
-        You are an AI mentor helping customize daily challenges for personal development. 
-        
-        Modify the given challenge to be more personalized and relevant based on the user's context and recent progress. Keep the core intent but make it more specific and achievable for this individual.
-        
-        Return only the customized challenge title and description, maintaining the motivational and actionable tone.
-        """
-        
-        let userPrompt = """
-        Base Challenge: \(baseChallenge.title)
-        Description: \(baseChallenge.description)
-        
-        User Context: \(userContext)
-        Recent Progress: \(recentProgress)
-        
-        Please customize this challenge to be more personal and relevant.
-        """
+    ) async -> Result<CustomChallenge, AIError> {
         
         do {
-            let customizedText = try await callOpenAI(
+            let systemPrompt = createChallengeCustomizationPrompt()
+            let userPrompt = """
+            Base Challenge: \(baseChallenge.title)
+            Description: \(baseChallenge.description)
+            
+            User Context: \(userContext)
+            Recent Progress: \(recentProgress)
+            
+            Please customize this challenge to be more relevant and achievable for this user.
+            """
+            
+            let customizedContent = try await callOpenAI(
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
-                maxTokens: 100
+                maxTokens: 150
             )
             
-            // Parse the response to extract title and description
-            let (title, description) = parseCustomizedChallenge(customizedText)
-            
-            return DailyChallenge(
-                title: title,
-                description: description,
-                path: baseChallenge.path,
-                difficulty: baseChallenge.difficulty,
-                date: baseChallenge.date
+            let customChallenge = CustomChallenge(
+                baseChallenge: baseChallenge,
+                aiReasoning: "Customized based on user context and recent progress"
             )
             
+            return .success(customChallenge)
+            
+        } catch let error as AIError {
+            return .failure(error)
         } catch {
-            // Return original challenge if customization fails
-            return baseChallenge
+            return .failure(.unknown(error.localizedDescription))
         }
     }
     
-    // MARK: - Smart Insights
-    func generateSmartInsight(
-        userProfile: UserProfile,
-        recentActivity: [String],
-        trainingPath: TrainingPath
-    ) async -> String {
-        
-        let systemPrompt = """
-        You are a wise AI mentor providing personalized insights for someone on a \(trainingPath.displayName.lowercased()) journey.
-        
-        Generate a short, powerful insight based on their recent activity. This should be:
-        - Encouraging and supportive
-        - Specific to their situation
-        - Actionable and practical
-        - No more than 2 sentences
-        
-        Focus on patterns, growth opportunities, or celebrating progress.
-        """
-        
-        let userPrompt = """
-        User has been working on \(trainingPath.displayName.lowercased()) for \(userProfile.totalChallengesCompleted) days.
-        Current streak: \(userProfile.currentStreak) days
-        Recent activity: \(recentActivity.joined(separator: ", "))
-        
-        Provide a supportive insight.
-        """
-        
-        do {
-            let insight = try await callOpenAI(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                maxTokens: 80
-            )
-            
-            return insight
-        } catch {
-            return getTemplateInsight(for: trainingPath, streak: userProfile.currentStreak)
-        }
+    func analyzeMood(dataPoints: [MoodDataPoint], period: MoodAnalysis.AnalysisPeriod) -> MoodAnalysis {
+        return MoodAnalysis(period: period, dataPoints: dataPoints)
     }
     
-    // MARK: - OpenAI API Call
-    private func callOpenAI(
-        systemPrompt: String,
-        userPrompt: String,
-        maxTokens: Int = 150
-    ) async throws -> String {
-        
-        guard !apiKey.isEmpty && apiKey != "your-openai-api-key-here" else {
+    // MARK: - Private Helper Methods
+    private func callOpenAI(systemPrompt: String, userPrompt: String, maxTokens: Int) async throws -> String {
+        guard !apiKey.isEmpty && apiKey != "your-api-key-here" else {
             throw AIError.invalidAPIKey
         }
         
@@ -252,55 +727,81 @@ class AIManager: ObservableObject {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw AIError.networkError
+        do {
+            let (data, response) = try await session.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw AIError.networkError(URLError(.badServerResponse))
+            }
+            
+            switch httpResponse.statusCode {
+            case 200:
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let choices = json["choices"] as? [[String: Any]],
+                   let firstChoice = choices.first,
+                   let message = firstChoice["message"] as? [String: Any],
+                   let content = message["content"] as? String {
+                    return content.trimmingCharacters(in: .whitespacesAndNewlines)
+                } else {
+                    throw AIError.invalidResponse
+                }
+            case 401:
+                throw AIError.authenticationFailed
+            case 429:
+                throw AIError.rateLimitExceeded
+            case 503:
+                throw AIError.modelOverloaded
+            default:
+                throw AIError.unknown("HTTP \(httpResponse.statusCode)")
+            }
+        } catch let error as AIError {
+            throw error
+        } catch {
+            throw AIError.networkError(error)
         }
-        
-        let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
-        
-        guard let content = openAIResponse.choices.first?.message.content else {
-            throw AIError.noResponse
-        }
-        
-        return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
-    // MARK: - Helper Methods
-    private func createCheckInSystemPrompt(
-        timeOfDay: AICheckIn.CheckInTime,
-        trainingPath: TrainingPath
-    ) -> String {
-        let timeContext = timeOfDay == .morning ? "starting their day" : "reflecting on their day"
-        
+    private func createSystemPrompt(for prompt: PersonalizedPrompt, context: AIResponse.ResponseContext) -> String {
         return """
-        You are a supportive AI mentor helping someone build \(trainingPath.displayName.lowercased()). 
+        You are an AI mentor specializing in personal development, particularly in \(context.trainingPath.displayName.lowercased()). 
         
-        The user is \(timeContext). Respond with encouragement, practical advice, or thoughtful questions. 
+        Provide supportive, actionable guidance that helps users grow in their chosen path. Be encouraging but realistic, 
+        and tailor your response to their current context and mood.
         
-        Keep responses:
-        - Warm and supportive
-        - Specific to \(trainingPath.displayName.lowercased()) development
-        - 1-2 sentences maximum
-        - Actionable when possible
+        Current context:
+        - Training Path: \(context.trainingPath.displayName)
+        - Time of Day: \(context.timeOfDay ?? "Unknown")
+        - User Mood: \(context.userMood ?? "Not specified")
+        - Recent Activity: \(context.recentActivity.joined(separator: ", "))
         
-        Focus on their \(trainingPath.description.lowercased()).
+        Keep responses concise, practical, and motivational.
         """
     }
     
-    private func createCheckInUserPrompt(
-        userInput: String,
-        mood: AICheckIn.MoodRating?
-    ) -> String {
-        var prompt = "User says: \"\(userInput)\""
+    private func createWeeklySummarySystemPrompt(trainingPath: TrainingPath) -> String {
+        return """
+        You are an AI mentor creating a weekly summary for someone focused on \(trainingPath.displayName.lowercased()).
         
-        if let mood = mood {
-            prompt += "\nTheir current mood: \(mood.rawValue)"
-        }
+        Analyze their weekly activity and provide:
+        1. Key insights about their progress
+        2. Patterns you notice in their growth
+        3. Specific acknowledgment of their efforts
+        4. Gentle guidance for continued development
+        5. Encouragement that feels personal and genuine
         
-        return prompt
+        Keep the tone warm, wise, and supportive. Focus on growth over perfection.
+        """
+    }
+    
+    private func createChallengeCustomizationPrompt() -> String {
+        return """
+        You are an AI mentor helping customize daily challenges for personal development.
+        
+        Take the base challenge and modify it to be more personalized and relevant based on the user's 
+        context and recent progress. Keep the core intent but make it more specific and achievable.
+        
+        Return only the customized challenge title and description, maintaining a motivational tone.
+        """
     }
     
     private func createWeeklyDataPrompt(
@@ -315,1107 +816,506 @@ class AIManager: ObservableObject {
             prompt += "- \(challenge.title)\n"
         }
         
-        prompt += "\nKey Journal Reflections:\n"
-        for entry in journalEntries.suffix(3) {
-            let excerpt = String(entry.content.prefix(100))
-            prompt += "- \(excerpt)...\n"
+        prompt += "\nJournal Entries (\(journalEntries.count)):\n"
+        for entry in journalEntries.prefix(3) {
+            let preview = String(entry.content.prefix(100))
+            prompt += "- \(preview)...\n"
         }
         
-        prompt += "\nCheck-in Highlights:\n"
-        for checkIn in checkIns.suffix(3) {
+        prompt += "\nCheck-ins (\(checkIns.count)):\n"
+        for checkIn in checkIns.prefix(3) {
             if let response = checkIn.userResponse {
-                let excerpt = String(response.prefix(80))
-                prompt += "- \(excerpt)...\n"
+                let preview = String(response.prefix(100))
+                prompt += "- \(preview)...\n"
             }
         }
         
         return prompt
     }
     
-    // MARK: - Template Responses (Fallbacks)
-    private func getTemplateCheckInResponse(
-        timeOfDay: AICheckIn.CheckInTime,
-        trainingPath: TrainingPath,
-        mood: AICheckIn.MoodRating?
-    ) -> String {
-        
-        let responses: [String]
-        
-        switch (timeOfDay, trainingPath) {
-        case (.morning, .discipline):
-            responses = [
-                "Great energy! Start with one small action that builds momentum for your day.",
-                "Your commitment to growth is inspiring. What's your first disciplined choice today?",
-                "Every morning is a fresh chance to strengthen your discipline muscle. You've got this!"
-            ]
-        case (.evening, .discipline):
-            responses = [
-                "Reflect on the disciplined choices you made today. Each one builds your strength.",
-                "How did you push through resistance today? Those moments define your growth.",
-                "Consistency over perfection. Celebrate the discipline you showed today."
-            ]
-        case (.morning, .clarity):
-            responses = [
-                "Take a moment to center yourself. What clarity do you need for today?",
-                "Your mind is like water - let it settle and see clearly.",
-                "What thoughts will serve your highest good today?"
-            ]
-        case (.evening, .clarity):
-            responses = [
-                "What insights emerged from today's experiences?",
-                "How did you create space for clarity in the chaos?",
-                "Reflect on the moments when your mind felt most clear today."
-            ]
-        case (.morning, .confidence):
-            responses = [
-                "You have everything within you to handle today. Trust yourself.",
-                "Confidence grows from action. What brave step will you take today?",
-                "Your authentic voice matters. How will you share it today?"
-            ]
-        case (.evening, .confidence):
-            responses = [
-                "Where did you show courage today, even in small ways?",
-                "How did you honor your authentic self today?",
-                "Confidence builds through action. Celebrate your brave moments."
-            ]
-        case (.morning, .purpose):
-            responses = [
-                "How will your actions today align with your deeper purpose?",
-                "What meaningful impact can you create today?",
-                "Your unique gifts are needed in the world. How will you share them?"
-            ]
-        case (.evening, .purpose):
-            responses = [
-                "How did you live your values today?",
-                "What gave you the deepest sense of meaning today?",
-                "Reflect on how today's actions moved you toward your purpose."
-            ]
-        case (.morning, .authenticity):
-            responses = [
-                "Be courageously yourself today. The world needs your authentic gifts.",
-                "What would it look like to be completely true to yourself today?",
-                "Your authenticity is your superpower. How will you embrace it?"
-            ]
-        case (.evening, .authenticity):
-            responses = [
-                "Where did you feel most like yourself today?",
-                "How did you honor your true nature today?",
-                "Reflect on the moments when you felt most authentic."
-            ]
-        }
-        
-        return responses.randomElement() ?? "Keep growing, one day at a time."
-    }
-    
-    private func getTemplateInsight(for path: TrainingPath, streak: Int) -> String {
-        switch path {
-        case .discipline:
-            if streak < 7 {
-                return "Building discipline is like building muscle - every rep counts, even when it's hard."
-            } else {
-                return "Your consistent effort is creating lasting change. Trust the process."
-            }
-        case .clarity:
-            return "Clarity comes not from having all the answers, but from asking better questions."
-        case .confidence:
-            return "Confidence isn't about feeling fearless - it's about taking action despite the fear."
-        case .purpose:
-            return "Purpose isn't found, it's created through the meaning you give your actions."
-        case .authenticity:
-            return "The more authentic you become, the more magnetic your presence becomes."
-        }
-    }
-    
     private func extractKeyThemes(from entries: [JournalEntry]) async throws -> [String] {
-        // Simple keyword extraction - could be enhanced with more sophisticated NLP
-        let allText = entries.map { $0.content }.joined(separator: " ").lowercased()
+        // Simplified theme extraction - in production, this would use more sophisticated analysis
+        let allText = entries.map { $0.content }.joined(separator: " ")
+        let words = allText.lowercased().components(separatedBy: .whitespacesAndNewlines)
         
-        let commonThemes = [
-            "growth", "challenge", "fear", "confidence", "progress", "struggle",
-            "success", "learning", "change", "habit", "discipline", "focus",
-            "clarity", "purpose", "authentic", "relationship", "work", "health"
-        ]
+        // Count word frequency and extract themes
+        var wordCount: [String: Int] = [:]
+        for word in words {
+            let cleanWord = word.trimmingCharacters(in: .punctuationCharacters)
+            if cleanWord.count > 4 { // Only meaningful words
+                wordCount[cleanWord, default: 0] += 1
+            }
+        }
         
-        return commonThemes.filter { theme in
-            allText.contains(theme)
-        }.prefix(3).map { $0.capitalized }
+        // Return most frequent meaningful words as themes
+        return Array(wordCount.sorted { $0.value > $1.value }.prefix(5).map { $0.key })
     }
     
     private func calculateCheckInStreak(_ checkIns: [AICheckIn]) -> Int {
-        // Calculate consecutive days with check-ins
         let calendar = Calendar.current
         let today = Date()
-        
         var streak = 0
-        var currentDate = today
         
-        for _ in 0..<30 { // Check last 30 days
-            let dayCheckIns = checkIns.filter { checkIn in
-                calendar.isDate(checkIn.date, inSameDayAs: currentDate)
-            }
+        for day in 0..<7 {
+            let date = calendar.date(byAdding: .day, value: -day, to: today)!
+            let hasCheckIn = checkIns.contains { calendar.isDate($0.date, inSameDayAs: date) }
             
-            if dayCheckIns.isEmpty {
+            if hasCheckIn {
+                streak += 1
+            } else if day == 0 {
+                // If no check-in today, streak is broken
                 break
             }
-            
-            streak += 1
-            currentDate = calendar.date(byAdding: .day, value: -1, to: currentDate)!
         }
         
         return streak
     }
     
-    private func determineRecommendedFocus(from entries: [JournalEntry]) -> TrainingPath? {
-        // Simple analysis of journal content to recommend focus area
-        let allText = entries.map { $0.content }.joined(separator: " ").lowercased()
-        
-        let pathKeywords: [TrainingPath: [String]] = [
-            .discipline: ["discipline", "habit", "routine", "consistency", "willpower"],
-            .clarity: ["clarity", "focus", "mindfulness", "meditation", "thoughts"],
-            .confidence: ["confidence", "fear", "courage", "self-doubt", "social"],
-            .purpose: ["purpose", "meaning", "values", "direction", "goals"],
-            .authenticity: ["authentic", "true", "genuine", "real", "honest"]
-        ]
-        
-        var pathScores: [TrainingPath: Int] = [:]
-        
-        for (path, keywords) in pathKeywords {
-            let score = keywords.reduce(0) { count, keyword in
-                count + allText.components(separatedBy: keyword).count - 1
-            }
-            pathScores[path] = score
-        }
-        
-        return pathScores.max(by: { $0.value < $1.value })?.key
-    }
-    
-    private func parseCustomizedChallenge(_ text: String) -> (String, String) {
-        let lines = text.components(separatedBy: .newlines).filter { !$0.isEmpty }
-        
-        if lines.count >= 2 {
-            return (lines[0], lines[1])
-        } else if lines.count == 1 {
-            return (lines[0], "Customized challenge for your growth journey.")
-        } else {
-            return ("Custom Challenge", "A personalized challenge for your development.")
-        }
-    }
-    
-    private func createTemplateWeeklySummary(
-        journalEntries: [JournalEntry],
-        completedChallenges: [DailyChallenge],
-        checkIns: [AICheckIn],
-        trainingPath: TrainingPath
-    ) -> WeeklySummary {
-        
-        let summaryText = """
-        This week you focused on \(trainingPath.displayName.lowercased()) and completed \(completedChallenges.count) challenges. 
-        Your dedication to growth is evident in your consistent effort. 
-        Keep building on this momentum as you continue your journey.
-        """
-        
-        return WeeklySummary(
-            weekStartDate: Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date(),
-            weekEndDate: Date(),
-            summary: summaryText,
-            keyThemes: ["Growth", "Progress", "Consistency"],
-            challengesCompleted: completedChallenges.count,
-            checkinStreak: calculateCheckInStreak(checkIns),
-            recommendedFocus: trainingPath
-        )
-    }
-}
-
-// MARK: - AI Error Types
-enum AIError: Error, LocalizedError {
-    case invalidAPIKey
-    case networkError
-    case noResponse
-    case rateLimitExceeded
-    
-    var errorDescription: String? {
-        switch self {
-        case .invalidAPIKey:
-            return "Invalid API key. Please check your configuration."
-        case .networkError:
-            return "Network error. Please check your connection."
-        case .noResponse:
-            return "No response from AI service."
-        case .rateLimitExceeded:
-            return "Too many requests. Please try again later."
+    private func determineResponseType(from category: PersonalizedPrompt.PromptCategory) -> AIResponse.ResponseType {
+        switch category {
+        case .reflection: return .insight
+        case .motivation: return .motivation
+        case .planning: return .guidance
+        case .assessment: return .checkIn
+        case .creativity: return .insight
+        case .problemSolving: return .guidance
         }
     }
 }
 
-// MARK: - OpenAI Response Models
-struct OpenAIResponse: Codable {
-    let choices: [Choice]
-    
-    struct Choice: Codable {
-        let message: Message
-        
-        struct Message: Codable {
-            let content: String
-        }
-    }
-}
-
-// MARK: - AI Configuration
-struct AIConfiguration {
-    static let maxRetries = 3
-    static let timeoutInterval: TimeInterval = 30
-    static let defaultModel = "gpt-3.5-turbo"
-    
-    // Rate limiting
-    static let maxRequestsPerHour = 100
-    static let maxRequestsPerDay = 1000
-}
-
-// MARK: - AI Usage Tracking
+// MARK: - AI Usage Tracker
 class AIUsageTracker: ObservableObject {
-    @Published var requestsThisHour = 0
-    @Published var requestsToday = 0
-    @Published var lastRequestTime = Date()
+    @Published var requestsToday: Int = 0
+    @Published var requestsThisHour: Int = 0
+    @Published var lastRequestTime: Date?
     
     private let userDefaults = UserDefaults.standard
+    private let requestLimit = 50 // Per hour for pro users
+    private let freeUserDailyLimit = 10
     
     init() {
         loadUsageData()
     }
     
-    func canMakeRequest() -> Bool {
-        let now = Date()
+    func canMakeRequest(userTier: SubscriptionTier = .free) -> Bool {
         let calendar = Calendar.current
+        let now = Date()
         
-        // Reset hourly count if hour has passed
-        if !calendar.isDate(lastRequestTime, equalTo: now, toGranularity: .hour) {
-            requestsThisHour = 0
+        // Reset counters if needed
+        if let lastRequest = lastRequestTime {
+            if !calendar.isDate(lastRequest, inSameDayAs: now) {
+                requestsToday = 0
+            }
+            
+            if !calendar.isDate(lastRequest, equalTo: now, toGranularity: .hour) {
+                requestsThisHour = 0
+            }
         }
         
-        // Reset daily count if day has passed
-        if !calendar.isDate(lastRequestTime, equalTo: now, toGranularity: .day) {
-            requestsToday = 0
+        // Check limits based on user tier
+        switch userTier {
+        case .free:
+            return requestsToday < freeUserDailyLimit
+        case .pro, .premium:
+            return requestsThisHour < requestLimit
         }
-        
-        return requestsThisHour < AIConfiguration.maxRequestsPerHour &&
-               requestsToday < AIConfiguration.maxRequestsPerDay
     }
     
     func recordRequest() {
-        requestsThisHour += 1
         requestsToday += 1
+        requestsThisHour += 1
         lastRequestTime = Date()
         saveUsageData()
     }
     
     private func loadUsageData() {
-        requestsThisHour = userDefaults.integer(forKey: "ai_requests_hour")
         requestsToday = userDefaults.integer(forKey: "ai_requests_day")
+        requestsThisHour = userDefaults.integer(forKey: "ai_requests_hour")
         if let lastRequest = userDefaults.object(forKey: "ai_last_request") as? Date {
             lastRequestTime = lastRequest
         }
     }
     
     private func saveUsageData() {
-        userDefaults.set(requestsThisHour, forKey: "ai_requests_hour")
         userDefaults.set(requestsToday, forKey: "ai_requests_day")
+        userDefaults.set(requestsThisHour, forKey: "ai_requests_hour")
         userDefaults.set(lastRequestTime, forKey: "ai_last_request")
     }
 }
 
 // MARK: - AI Enhanced Views
 
-// Enhanced Check-In View with AI
-struct AIEnhancedCheckInView: View {
-    @EnvironmentObject var dataManager: DataManager
-    @EnvironmentObject var authManager: AuthManager
-    @StateObject private var aiManager = AIManager()
-    @StateObject private var usageTracker = AIUsageTracker()
-    
-    @State private var userInput = ""
-    @State private var selectedMood: AICheckIn.MoodRating?
-    @State private var timeOfDay: AICheckIn.CheckInTime = .morning
-    @State private var aiResponse = ""
-    @State private var showingResponse = false
-    
-    var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Header
-                    VStack(spacing: 16) {
-                        Image(systemName: timeOfDay == .morning ? "sun.max.fill" : "moon.stars.fill")
-                            .font(.system(size: 50))
-                            .foregroundColor(timeOfDay == .morning ? .orange : .indigo)
-                        
-                        Text("\(timeOfDay.displayName) Check-in")
-                            .font(.title)
-                            .fontWeight(.bold)
-                        
-                        Text(timeOfDay == .morning ? 
-                             "How are you feeling as you start your day?" :
-                             "How did your day go? What did you learn?")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    
-                    // Mood Selection
-                    MoodSelectionView(selectedMood: $selectedMood)
-                    
-                    // Text Input
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Share your thoughts")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        TextField("How are you feeling? What's on your mind?", text: $userInput, axis: .vertical)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .lineLimit(4...8)
-                    }
-                    .padding(.horizontal, 20)
-                    
-                    // AI Response Section
-                    if showingResponse {
-                        AIResponseCard(response: aiResponse, isLoading: aiManager.isLoading)
-                    }
-                    
-                    // Submit Button
-                    Button(action: submitCheckIn) {
-                        HStack {
-                            if aiManager.isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(0.8)
-                            } else {
-                                Text("Get AI Feedback")
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
-                            }
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(
-                            LinearGradient(
-                                gradient: Gradient(colors: [
-                                    dataManager.userProfile?.selectedPath.color ?? .blue,
-                                    (dataManager.userProfile?.selectedPath.color ?? .blue).opacity(0.8)
-                                ]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .cornerRadius(12)
-                    }
-                    .disabled(userInput.isEmpty || aiManager.isLoading || !canUseAI)
-                    .padding(.horizontal, 20)
-                    
-                    // Usage limit warning
-                    if !canUseAI {
-                        AIUsageLimitView()
-                    }
-                    
-                    Spacer(minLength: 40)
-                }
-                .padding(.top, 20)
-            }
-            .navigationTitle("Check-in")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-    
-    private var canUseAI: Bool {
-        guard let user = authManager.currentUser else { return false }
-        
-        if user.subscription == .pro {
-            return usageTracker.canMakeRequest()
-        } else {
-            // Free users have limited AI check-ins
-            return usageTracker.requestsToday < 3 && usageTracker.canMakeRequest()
-        }
-    }
-    
-    private func submitCheckIn() {
-        guard let userProfile = dataManager.userProfile,
-              !userInput.isEmpty else { return }
-        
-        usageTracker.recordRequest()
-        
-        Task {
-            let response = await aiManager.generateCheckInResponse(
-                userInput: userInput,
-                timeOfDay: timeOfDay,
-                trainingPath: userProfile.selectedPath,
-                mood: selectedMood
-            )
-            
-            await MainActor.run {
-                aiResponse = response
-                showingResponse = true
-                
-                // Save the check-in
-                let checkIn = AICheckIn(
-                    date: Date(),
-                    timeOfDay: timeOfDay,
-                    prompt: timeOfDay == .morning ? 
-                        "How are you feeling as you start your day?" :
-                        "How did your day go? What did you learn?",
-                    userResponse: userInput,
-                    aiResponse: response,
-                    mood: selectedMood
-                )
-                
-                dataManager.submitCheckIn(checkIn)
-                
-                // Clear form
-                userInput = ""
-                selectedMood = nil
-            }
-        }
-    }
-}
-
-// MARK: - Supporting Views
-
-// Mood Selection View
-struct MoodSelectionView: View {
-    @Binding var selectedMood: AICheckIn.MoodRating?
+struct AIResponseView: View {
+    let response: AIResponse
+    @State private var isExpanded = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("How are you feeling?")
-                .font(.headline)
-                .fontWeight(.semibold)
-                .padding(.horizontal, 20)
-            
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
-                    ForEach(AICheckIn.MoodRating.allCases, id: \.self) { mood in
-                        Button(action: {
-                            withAnimation(.easeInOut) {
-                                selectedMood = selectedMood == mood ? nil : mood
-                            }
-                        }) {
-                            VStack(spacing: 8) {
-                                Text(mood.emoji)
-                                    .font(.system(size: 30))
-                                
-                                Text(mood.rawValue.capitalized)
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(selectedMood == mood ? .white : .primary)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(selectedMood == mood ? Color.blue : Color(.systemGray6))
-                            )
-                        }
-                        .scaleEffect(selectedMood == mood ? 1.05 : 1.0)
-                        .animation(.easeInOut(duration: 0.2), value: selectedMood)
-                    }
-                }
-                .padding(.horizontal, 20)
-            }
-        }
-    }
-}
-
-// AI Response Card
-struct AIResponseCard: View {
-    let response: String
-    let isLoading: Bool
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+            // Header
             HStack {
-                Image(systemName: "brain.head.profile")
+                Image(systemName: response.type.icon)
                     .foregroundColor(.purple)
                 
-                Text("AI Mentor Response")
+                Text(response.type.displayName)
                     .font(.headline)
                     .fontWeight(.semibold)
                 
                 Spacer()
                 
-                if isLoading {
-                    ProgressView()
-                        .scaleEffect(0.7)
+                // Confidence indicator
+                HStack(spacing: 4) {
+                    ForEach(0..<5, id: \.self) { index in
+                        Circle()
+                            .fill(index < Int(response.confidence * 5) ? Color.purple : Color.gray.opacity(0.3))
+                            .frame(width: 6, height: 6)
+                    }
                 }
             }
             
-            if !response.isEmpty {
-                Text(response)
-                    .font(.body)
-                    .foregroundColor(.primary)
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(12)
-            } else if isLoading {
-                HStack {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text("Generating personalized response...")
-                        .font(.body)
-                        .foregroundColor(.secondary)
+            // Content
+            Text(response.content)
+                .font(.body)
+                .lineLimit(isExpanded ? nil : 4)
+                .animation(.easeInOut, value: isExpanded)
+            
+            // Expand/Collapse
+            if response.content.count > 200 {
+                Button(isExpanded ? "Show Less" : "Show More") {
+                    isExpanded.toggle()
                 }
-                .padding()
+                .font(.caption)
+                .foregroundColor(.purple)
             }
-        }
-        .padding(.horizontal, 20)
-    }
-}
-
-// AI Usage Limit View
-struct AIUsageLimitView: View {
-    @EnvironmentObject var authManager: AuthManager
-    @State private var showingPaywall = false
-    
-    var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("AI Limit Reached")
+            
+            // Suggestions
+            if !response.suggestions.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Suggestions:")
                         .font(.subheadline)
-                        .fontWeight(.semibold)
+                        .fontWeight(.medium)
                     
-                    Text(authManager.currentUser?.subscription == .free ? 
-                         "Free users get 3 AI responses per day" :
-                         "You've reached your hourly limit")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                if authManager.currentUser?.subscription == .free {
-                    Button("Upgrade") {
-                        showingPaywall = true
-                    }
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.orange)
-                    .cornerRadius(8)
-                }
-            }
-            .padding()
-            .background(Color.orange.opacity(0.1))
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.orange.opacity(0.3), lineWidth: 1)
-            )
-        }
-        .padding(.horizontal, 20)
-        .sheet(isPresented: $showingPaywall) {
-            PaywallView()
-                .environmentObject(authManager)
-        }
-    }
-}
-
-// MARK: - Weekly Summary View
-struct WeeklySummaryView: View {
-    @EnvironmentObject var dataManager: DataManager
-    @EnvironmentObject var authManager: AuthManager
-    @StateObject private var aiManager = AIManager()
-    
-    @State private var weeklySummary: WeeklySummary?
-    @State private var isGenerating = false
-    
-    var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    if let summary = weeklySummary {
-                        // Generated Summary Display
-                        WeeklySummaryCard(summary: summary)
-                        
-                        // Key Themes
-                        if !summary.keyThemes.isEmpty {
-                            KeyThemesView(themes: summary.keyThemes)
-                        }
-                        
-                        // Stats
-                        WeeklyStatsView(summary: summary)
-                        
-                        // Recommended Focus
-                        if let recommendedFocus = summary.recommendedFocus {
-                            RecommendedFocusView(path: recommendedFocus)
-                        }
-                        
-                    } else {
-                        // Generate Summary Prompt
-                        VStack(spacing: 20) {
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.system(size: 60))
-                                .foregroundColor(.blue)
+                    ForEach(response.suggestions, id: \.self) { suggestion in
+                        HStack {
+                            Image(systemName: "lightbulb.fill")
+                                .foregroundColor(.yellow)
+                                .font(.caption)
                             
-                            Text("Weekly Insights")
-                                .font(.title)
-                                .fontWeight(.bold)
-                            
-                            Text("Get AI-powered insights about your week's progress, patterns, and growth opportunities.")
-                                .font(.body)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 40)
-                            
-                            Button(action: generateSummary) {
-                                HStack {
-                                    if isGenerating {
-                                        ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                            .scaleEffect(0.8)
-                                    } else {
-                                        Image(systemName: "brain.head.profile")
-                                        Text("Generate AI Summary")
-                                            .fontWeight(.semibold)
-                                    }
-                                }
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 16)
-                                .background(
-                                    LinearGradient(
-                                        gradient: Gradient(colors: [Color.purple, Color.blue]),
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .cornerRadius(12)
-                            }
-                            .disabled(isGenerating || !canUseAI)
-                            .padding(.horizontal, 40)
-                            
-                            if !canUseAI {
-                                Text("AI summaries require Pro subscription")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
+                            Text(suggestion)
+                                .font(.caption)
                         }
                     }
-                    
-                    Spacer(minLength: 40)
                 }
-                .padding(.top, 20)
+                .padding(.top, 8)
             }
-            .navigationTitle("Weekly Summary")
-            .navigationBarTitleDisplayMode(.large)
-            .refreshable {
-                await refreshSummary()
-            }
-        }
-        .onAppear {
-            loadExistingSummary()
-        }
-    }
-    
-    private var canUseAI: Bool {
-        authManager.currentUser?.subscription == .pro
-    }
-    
-    private func generateSummary() {
-        guard canUseAI else { return }
-        
-        isGenerating = true
-        
-        Task {
-            let summary = await aiManager.generateWeeklySummary(
-                journalEntries: dataManager.journalEntries,
-                completedChallenges: getWeeksChallenges(),
-                checkIns: getWeeksCheckIns(),
-                trainingPath: dataManager.userProfile?.selectedPath ?? .discipline
-            )
             
-            await MainActor.run {
-                weeklySummary = summary
-                dataManager.weeklySummaries.append(summary)
-                isGenerating = false
-            }
-        }
-    }
-    
-    private func refreshSummary() async {
-        if canUseAI {
-            await generateSummary()
-        }
-    }
-    
-    private func loadExistingSummary() {
-        // Check if we already have this week's summary
-        let calendar = Calendar.current
-        let currentWeek = calendar.dateInterval(of: .weekOfYear, for: Date())
-        
-        weeklySummary = dataManager.weeklySummaries.first { summary in
-            guard let weekInterval = currentWeek else { return false }
-            return calendar.isDate(summary.weekStartDate, equalTo: weekInterval.start, toGranularity: .day)
-        }
-    }
-    
-    private func getWeeksChallenges() -> [DailyChallenge] {
-        // Return challenges from the current week
-        let calendar = Calendar.current
-        let weekAgo = calendar.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-        
-        // This would be implemented based on your challenge storage
-        return []
-    }
-    
-    private func getWeeksCheckIns() -> [AICheckIn] {
-        // Return check-ins from the current week
-        let calendar = Calendar.current
-        let weekAgo = calendar.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-        
-        return dataManager.todaysCheckIns.filter { checkIn in
-            checkIn.date >= weekAgo
-        }
-    }
-}
-
-// MARK: - Weekly Summary Supporting Views
-
-struct WeeklySummaryCard: View {
-    let summary: WeeklySummary
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+            // Metadata
             HStack {
-                Image(systemName: "brain.head.profile")
-                    .foregroundColor(.purple)
-                
-                Text("AI Weekly Insights")
-                    .font(.headline)
-                    .fontWeight(.semibold)
+                Text("Generated \(response.generatedAt, style: .relative) ago")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 
                 Spacer()
                 
-                Text(formatDateRange(start: summary.weekStartDate, end: summary.weekEndDate))
+                Text("\(response.tokenCount) words")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
-            Text(summary.summary)
-                .font(.body)
-                .foregroundColor(.primary)
-                .lineSpacing(2)
+            .padding(.top, 4)
         }
         .padding()
         .background(Color(.systemGray6))
-        .cornerRadius(16)
-        .padding(.horizontal, 20)
-    }
-    
-    private func formatDateRange(start: Date, end: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        return "\(formatter.string(from: start)) - \(formatter.string(from: end))"
+        .cornerRadius(12)
     }
 }
 
-struct KeyThemesView: View {
-    let themes: [String]
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Key Themes")
-                .font(.headline)
-                .fontWeight(.semibold)
-                .padding(.horizontal, 20)
-            
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(themes, id: \.self) { theme in
-                        Text(theme)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.blue)
-                            .cornerRadius(20)
-                    }
-                }
-                .padding(.horizontal, 20)
-            }
-        }
-    }
-}
-
-struct WeeklyStatsView: View {
-    let summary: WeeklySummary
+struct MoodAnalysisView: View {
+    let analysis: MoodAnalysis
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("This Week's Stats")
-                .font(.headline)
-                .fontWeight(.semibold)
-                .padding(.horizontal, 20)
-            
-            HStack(spacing: 16) {
-                StatCard(
-                    title: "Challenges",
-                    value: "\(summary.challengesCompleted)",
-                    subtitle: "completed",
-                    color: .green
-                )
-                
-                StatCard(
-                    title: "Check-in Streak",
-                    value: "\(summary.checkinStreak)",
-                    subtitle: "days",
-                    color: .orange
-                )
-            }
-            .padding(.horizontal, 20)
-        }
-    }
-}
-
-struct RecommendedFocusView: View {
-    let path: TrainingPath
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recommended Focus")
-                .font(.headline)
-                .fontWeight(.semibold)
-                .padding(.horizontal, 20)
-            
-            HStack(spacing: 16) {
-                Image(systemName: path.icon)
-                    .font(.title2)
-                    .foregroundColor(path.color)
-                    .frame(width: 40, height: 40)
-                    .background(path.color.opacity(0.1))
-                    .cornerRadius(12)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(path.displayName)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    
-                    Text("Consider focusing on \(path.displayName.lowercased()) for continued growth")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-            }
-            .padding()
-            .background(Color(.systemGray6))
-            .cornerRadius(12)
-            .padding(.horizontal, 20)
-        }
-    }
-}
-
-// MARK: - Smart Insights Widget
-struct SmartInsightsWidget: View {
-    @EnvironmentObject var dataManager: DataManager
-    @StateObject private var aiManager = AIManager()
-    
-    @State private var insight = ""
-    @State private var isLoading = false
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+            // Header
             HStack {
-                Image(systemName: "lightbulb.fill")
-                    .foregroundColor(.yellow)
+                Image(systemName: "brain.head.profile")
+                    .foregroundColor(.blue)
                 
-                Text("Smart Insight")
+                Text("Mood Analysis")
                     .font(.headline)
                     .fontWeight(.semibold)
                 
                 Spacer()
                 
-                if isLoading {
-                    ProgressView()
-                        .scaleEffect(0.7)
+                Text(analysis.period.displayName)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            // Average Mood
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Average Mood")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    HStack {
+                        Text(String(format: "%.1f", analysis.averageMood))
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("/ 5.0")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+                
+                // Trend indicator
+                HStack {
+                    Image(systemName: analysis.moodTrend.icon)
+                        .foregroundColor(analysis.moodTrend.color)
+                    
+                    Text(analysis.moodTrend.rawValue.capitalized)
+                        .font(.caption)
+                        .foregroundColor(analysis.moodTrend.color)
                 }
             }
             
-            if !insight.isEmpty {
-                Text(insight)
-                    .font(.body)
-                    .foregroundColor(.primary)
-                    .lineSpacing(2)
-            } else {
-                Text("Tap to get a personalized insight about your progress")
-                    .font(.body)
-                    .foregroundColor(.secondary)
+            // Mood Chart (simplified)
+            if !analysis.dataPoints.isEmpty {
+                moodChartView
+            }
+            
+            // Insights
+            if !analysis.recommendations.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Insights:")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    ForEach(analysis.recommendations, id: \.self) { recommendation in
+                        HStack {
+                            Image(systemName: "lightbulb.fill")
+                                .foregroundColor(.yellow)
+                                .font(.caption)
+                            
+                            Text(recommendation)
+                                .font(.caption)
+                        }
+                    }
+                }
             }
         }
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(12)
-        .onTapGesture {
-            generateInsight()
-        }
     }
     
-    private func generateInsight() {
-        guard !isLoading,
-              let userProfile = dataManager.userProfile else { return }
-        
-        isLoading = true
-        
-        Task {
-            let generatedInsight = await aiManager.generateSmartInsight(
-                userProfile: userProfile,
-                recentActivity: getRecentActivity(),
-                trainingPath: userProfile.selectedPath
-            )
+    private var moodChartView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Mood Trend")
+                .font(.caption)
+                .fontWeight(.medium)
             
-            await MainActor.run {
-                insight = generatedInsight
-                isLoading = false
+            HStack(alignment: .bottom, spacing: 4) {
+                ForEach(analysis.dataPoints.prefix(7), id: \.id) { dataPoint in
+                    Rectangle()
+                        .fill(colorForMood(dataPoint.averageMood))
+                        .frame(width: 30, height: CGFloat(dataPoint.averageMood * 20))
+                        .cornerRadius(4)
+                }
             }
+            .frame(height: 100)
         }
     }
     
-    private func getRecentActivity() -> [String] {
-        // Gather recent user activity
-        var activity: [String] = []
-        
-        if let challenge = dataManager.todaysChallenge, challenge.isCompleted {
-            activity.append("Completed daily challenge")
+    private func colorForMood(_ mood: Double) -> Color {
+        if mood >= 4.0 {
+            return .green
+        } else if mood >= 3.0 {
+            return .blue
+        } else if mood >= 2.0 {
+            return .orange
+        } else {
+            return .red
         }
-        
-        if !dataManager.todaysCheckIns.isEmpty {
-            activity.append("Completed check-in")
-        }
-        
-        if !dataManager.journalEntries.isEmpty {
-            activity.append("Made journal entry")
-        }
-        
-        activity.append("Current streak: \(dataManager.userProfile?.currentStreak ?? 0) days")
-        
-        return activity
     }
 }
 
-// MARK: - AI Configuration View
-struct AIConfigurationView: View {
-    @AppStorage("ai_model") private var selectedModel = "gpt-3.5-turbo"
-    @AppStorage("ai_temperature") private var temperature = 0.7
-    @AppStorage("ai_max_tokens") private var maxTokens = 150
-    @AppStorage("ai_enabled") private var aiEnabled = true
+struct WeeklySummaryCard: View {
+    let summary: WeeklySummary
+    @State private var isExpanded = false
     
     var body: some View {
-        NavigationView {
-            Form {
-                Section("AI Settings") {
-                    Toggle("Enable AI Features", isOn: $aiEnabled)
+        VStack(alignment: .leading, spacing: 16) {
+            // Header
+            HStack {
+                Image(systemName: "doc.text.fill")
+                    .foregroundColor(.purple)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Weekly Summary")
+                        .font(.headline)
+                        .fontWeight(.semibold)
                     
-                    Picker("AI Model", selection: $selectedModel) {
-                        Text("GPT-3.5 Turbo").tag("gpt-3.5-turbo")
-                        Text("GPT-4").tag("gpt-4")
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Response Creativity")
-                        Slider(value: $temperature, in: 0...1, step: 0.1)
-                        Text("Current: \(temperature, specifier: "%.1f")")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Stepper("Max Response Length: \(maxTokens)", value: $maxTokens, in: 50...300, step: 50)
+                    Text(summary.formattedDateRange)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 
-                Section("Usage Guidelines") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("• AI responses are generated based on your input")
-                        Text("• Your data is used to personalize responses")
-                        Text("• AI advice should not replace professional help")
-                        Text("• Report any inappropriate responses")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Spacer()
+                
+                // Mood trend indicator
+                HStack {
+                    Image(systemName: summary.moodTrend.icon)
+                        .foregroundColor(summary.moodTrend.color)
+                    
+                    Text(summary.moodTrend.displayName)
+                        .font(.caption)
+                        .foregroundColor(summary.moodTrend.color)
                 }
             }
-            .navigationTitle("AI Settings")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-}
-
-// MARK: - Integration Helpers
-
-extension DataManager {
-    // Enhanced methods for AI integration
-    
-    func getRecentJournalEntries(days: Int = 7) -> [JournalEntry] {
-        let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
-        return journalEntries.filter { $0.date >= cutoffDate }
-    }
-    
-    func getRecentCheckIns(days: Int = 7) -> [AICheckIn] {
-        let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
-        return todaysCheckIns.filter { $0.date >= cutoffDate }
-    }
-    
-    func getUserContext() -> String {
-        guard let profile = userProfile else { return "" }
-        
-        return """
-        User has been focusing on \(profile.selectedPath.displayName) for \(profile.totalChallengesCompleted) days.
-        Current streak: \(profile.currentStreak) days.
-        Longest streak: \(profile.longestStreak) days.
-        Recent progress shows consistent engagement with personal development.
-        """
-    }
-}
-
-// MARK: - AI Response Cache
-class AIResponseCache {
-    private var cache: [String: String] = [:]
-    private let maxCacheSize = 100
-    
-    func getCachedResponse(for key: String) -> String? {
-        return cache[key]
-    }
-    
-    func cacheResponse(_ response: String, for key: String) {
-        if cache.count >= maxCacheSize {
-            // Remove oldest entries
-            let oldestKey = cache.keys.first
-            if let key = oldestKey {
-                cache.removeValue(forKey: key)
+            
+            // Summary text
+            Text(summary.summary)
+                .font(.body)
+                .lineLimit(isExpanded ? nil : 4)
+                .animation(.easeInOut, value: isExpanded)
+            
+            if summary.summary.count > 300 {
+                Button(isExpanded ? "Show Less" : "Read More") {
+                    isExpanded.toggle()
+                }
+                .font(.caption)
+                .foregroundColor(.purple)
+            }
+            
+            // Key themes
+            if !summary.keyThemes.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Key Themes")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    LazyVGrid(columns: [
+                        GridItem(.flexible()),
+                        GridItem(.flexible())
+                    ], spacing: 8) {
+                        ForEach(summary.keyThemes, id: \.self) { theme in
+                            Text(theme)
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.purple.opacity(0.1))
+                                .foregroundColor(.purple)
+                                .cornerRadius(8)
+                        }
+                    }
+                }
+            }
+            
+            // Stats
+            HStack {
+                StatItem(title: "Challenges", value: "\(summary.challengesCompleted)")
+                Spacer()
+                StatItem(title: "Check-in Streak", value: "\(summary.checkinStreak)")
+                Spacer()
+                StatItem(title: "AI Confidence", value: "\(Int(summary.aiConfidenceScore * 100))%")
             }
         }
-        cache[key] = response
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
     }
+}
+
+struct StatItem: View {
+    let title: String
+    let value: String
     
-    private func generateCacheKey(userInput: String, context: String) -> String {
-        return "\(userInput.hashValue)_\(context.hashValue)"
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.headline)
+                .fontWeight(.bold)
+            
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+}
+
+// MARK: - Error Handling View
+struct AIErrorView: View {
+    let error: AIError
+    let retryAction: (() -> Void)?
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: error.icon)
+                .font(.system(size: 40))
+                .foregroundColor(.orange)
+            
+            VStack(spacing: 8) {
+                Text("AI Error")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Text(error.localizedDescription)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                if let recoveryAction = error.recoveryAction {
+                    Text(recoveryAction)
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+            }
+            
+            if let retryAction = retryAction {
+                Button("Try Again") {
+                    retryAction()
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.orange)
+                .cornerRadius(8)
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
     }
 }
 
 // MARK: - Preview
-struct AIEnhancedCheckInView_Previews: PreviewProvider {
+struct AIIntegrationSystem_Previews: PreviewProvider {
     static var previews: some View {
-        AIEnhancedCheckInView()
-            .environmentObject(DataManager())
-            .environmentObject(AuthManager())
-    }
-}
-
-struct WeeklySummaryView_Previews: PreviewProvider {
-    static var previews: some View {
-        WeeklySummaryView()
-            .environmentObject(DataManager())
-            .environmentObject(AuthManager())
+        ScrollView {
+            VStack(spacing: 16) {
+                AIResponseView(response: AIResponse(
+                    content: "Great job on completing your daily challenge! I can see you're building consistency in your discipline practice. Consider focusing on one specific area tomorrow to deepen your growth.",
+                    type: .checkIn,
+                    suggestions: ["Focus on morning routines", "Set specific time blocks"],
+                    followUpQuestions: ["What felt most challenging today?", "How can you improve tomorrow?"]
+                ))
+                
+                MoodAnalysisView(analysis: MoodAnalysis(
+                    period: .week,
+                    dataPoints: [
+                        MoodDataPoint(date: Date(), averageMood: 4.2),
+                        MoodDataPoint(date: Calendar.current.date(byAdding: .day, value: -1, to: Date())!, averageMood: 3.8),
+                        MoodDataPoint(date: Calendar.current.date(byAdding: .day, value: -2, to: Date())!, averageMood: 4.5)
+                    ]
+                ))
+                
+                AIErrorView(error: .rateLimitExceeded, retryAction: {})
+            }
+            .padding()
+        }
     }
 }
